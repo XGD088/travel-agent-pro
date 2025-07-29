@@ -1,0 +1,19 @@
+graph LR
+  subgraph front[Frontend]
+    FE1[Chat UI]
+    FE2[TripCard<br>Renderer]
+  end
+  subgraph back[Backend FastAPI]
+    API[/REST Router/]
+    Orchestrator{{LangChain Router}}
+    Mem[(ConvMemory)]
+    WeatherTool>GET Weather]
+    MapTool>GET Distance/POI]
+    RAG[(Milvus)]
+  end
+  FE1 -->|/chat| API --> Orchestrator
+  Orchestrator --> CLLM[(LLM API)]
+  Orchestrator --> WeatherTool
+  Orchestrator --> MapTool
+  Orchestrator --> RAG
+  Orchestrator -->|Plan JSON| FE2
