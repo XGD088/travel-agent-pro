@@ -1,1 +1,52 @@
+# 环境变量和密钥
+.env
+.env.local
+.env.*.local
+
+# 依赖目录
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# IDE 和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+logs/
+
+# 构建输出
+.next/
+out/
+build/
+dist/
+
+# 测试覆盖率
+coverage/
+.coverage
+.nyc_output
+
+# 临时文件
+*.tmp
+*.temp
+
+# Docker
+.dockerignore
+
+# Python 特定
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# 项目特定
 /docs/timeline
