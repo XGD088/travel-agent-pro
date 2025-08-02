@@ -50,3 +50,5 @@ coverage/
 
 # 项目特定
 /docs/timeline
+/backend/view_logs.py
+/backend/LOG_GUIDE.md
