@@ -4,6 +4,7 @@ from typing import Optional
 from openai import OpenAI
 from ..schemas import TripRequest, TripPlan
 from ..logging_config import get_logger
+from .poi_embedding_service import POIEmbeddingService
 
 logger = get_logger(__name__)
 
@@ -12,6 +13,9 @@ class QwenService:
         """初始化 Qwen 服务"""
         logger.info("🔧 初始化 Qwen 服务")
         self.client = None
+        # 初始化POI嵌入服务
+        self.poi_service = POIEmbeddingService()
+        logger.info("🔧 初始化POI嵌入服务")
 
     def _get_client(self):
         """延迟初始化 Qwen 客户端"""
@@ -37,8 +41,11 @@ class QwenService:
         """生成旅行计划"""
         logger.info(f"🎯 开始生成旅行计划: {request.destination}, {request.duration_days}天")
 
+        # 使用RAG检索相关POI信息
+        poi_context = self._get_poi_context(request)
+        
         # 构建 prompt
-        prompt = self._build_prompt(request)
+        prompt = self._build_prompt(request, poi_context)
         logger.debug(f"构建的 prompt 长度: {len(prompt)} 字符")
 
         try:
@@ -103,7 +110,44 @@ class QwenService:
             logger.error(f"❌ 生成旅行计划时出错: {e}", exc_info=True)
             raise ValueError(f"生成旅行计划时出错: {e}")
 
-    def _build_prompt(self, request: TripRequest) -> str:
+    def _get_poi_context(self, request: TripRequest) -> str:
+        """获取相关POI上下文信息"""
+        try:
+            # 构建查询
+            query = f"北京{request.theme or '旅游'}景点"
+            
+            # 检索相关POI
+            poi_results = self.poi_service.search_pois_by_query(query, n_results=10)
+            
+            if not poi_results:
+                logger.warning("⚠️ 未找到相关POI信息")
+                return ""
+            
+            # 构建POI上下文
+            context_parts = []
+            for result in poi_results:
+                poi_info = result['poi_info']
+                context_parts.append(f"""
+景点名称: {poi_info['name']}
+类型: {poi_info['type']}
+地址: {poi_info['address']}
+评分: {poi_info['rating']}
+门票: {poi_info['ticket_price']}元
+营业时间: {poi_info['business_hours']}
+标签: {', '.join(poi_info['tags'])}
+详细介绍: {result['description']}
+相似度: {result['similarity_score']:.2f}
+---""")
+            
+            context = "\n".join(context_parts)
+            logger.info(f"📚 获取到 {len(poi_results)} 个相关POI信息")
+            return context
+            
+        except Exception as e:
+            logger.error(f"❌ 获取POI上下文失败: {e}")
+            return ""
+
+    def _build_prompt(self, request: TripRequest, poi_context: str = "") -> str:
         """构建 Qwen prompt"""
         logger.debug("📝 构建 prompt")
 
@@ -125,6 +169,15 @@ class QwenService:
 
         if request.start_date:
             prompt += f"- 开始日期: {request.start_date}\n"
+
+        # 添加POI上下文信息
+        if poi_context:
+            prompt += f"""
+相关景点信息参考：
+{poi_context}
+
+请基于以上景点信息来规划行程，确保推荐的景点真实存在且信息准确。
+"""
 
         # JSON Schema 要求
         prompt += f"""
@@ -150,7 +203,7 @@ class QwenService:
           "duration_minutes": 活动时长分钟数,
           "description": "详细描述",
           "estimated_cost": 预估费用数字,
-          "tips": "实用小贴士"
+          "tips": "实用小贴士（必须是单个字符串，不能是数组）"
         }}
       ],
       "daily_summary": "当日总结",
@@ -168,7 +221,10 @@ class QwenService:
 4. 每天安排4-6个主要活动
 5. 包含早中晚餐安排
 6. 给出实用的旅行建议
-7. 只返回JSON，不要任何其他文字说明
+7. 优先使用提供的景点信息
+8. 只返回JSON，不要任何其他文字说明
+9. tips字段必须是字符串，不能是数组
+10. 确保所有字段类型正确
 
 请严格按照上述JSON格式返回旅行计划："""
 

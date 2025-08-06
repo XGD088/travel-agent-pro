@@ -1,6 +1,8 @@
-FROM python:3.11-slim
+# 使用官方Python镜像（通过腾讯云镜像代理）
+FROM python:3.13-slim
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/
 COPY app ./app
+EXPOSE 8000
 CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"] 

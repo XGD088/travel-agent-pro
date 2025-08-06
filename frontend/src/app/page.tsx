@@ -1,24 +1,270 @@
-import React from 'react'
+'use client'
+
+import React, { useState } from 'react'
+
+interface TripPlan {
+  destination: string
+  duration_days: number
+  theme: string
+  start_date: string
+  end_date: string
+  daily_plans: Array<{
+    date: string
+    day_title: string
+    activities: Array<{
+      name: string
+      type: string
+      location: string
+      start_time: string
+      end_time: string
+      duration_minutes: number
+      description: string
+      estimated_cost: number
+      tips: string
+    }>
+    daily_summary: string
+    estimated_daily_cost: number
+  }>
+  total_estimated_cost: number
+  general_tips: string[]
+}
 
 export default function Home() {
+  const [isLoading, setIsLoading] = useState(false)
+  const [tripPlan, setTripPlan] = useState<TripPlan | null>(null)
+  const [poiStats, setPoiStats] = useState<any>(null)
+  const [embeddingStatus, setEmbeddingStatus] = useState<any>(null)
+
+  const generateTrip = async () => {
+    setIsLoading(true)
+    try {
+      const response = await fetch('http://localhost:8000/generate-trip', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          destination: '北京',
+          duration_days: 2,
+          theme: '文化古都之旅'
+        })
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setTripPlan(data)
+      } else {
+        console.error('Failed to generate trip plan')
+        // 显示错误信息
+        const errorData = await response.json()
+        alert(`生成旅行计划失败: ${errorData.detail || '未知错误'}`)
+      }
+    } catch (error) {
+      console.error('Error generating trip plan:', error)
+      alert('生成旅行计划时发生错误，请检查网络连接')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const getPoiStats = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/poi-stats')
+      if (response.ok) {
+        const data = await response.json()
+        setPoiStats(data)
+      }
+    } catch (error) {
+      console.error('Error getting POI stats:', error)
+    }
+  }
+
+  const getEmbeddingStatus = async () => {
+    try {
+      const response = await fetch('http://localhost:8000/embedding-status')
+      if (response.ok) {
+        const data = await response.json()
+        setEmbeddingStatus(data)
+      }
+    } catch (error) {
+      console.error('Error getting embedding status:', error)
+    }
+  }
+
   return (
     <main className="container mx-auto px-4 py-8">
-      <div className="text-center">
+      <div className="text-center mb-8">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">
           🏃🏻 Travel Agent Pro
         </h1>
         <p className="text-xl text-gray-600 mb-8">
           AI-Powered Weekend Trip Planner (Beijing ver.)
         </p>
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 max-w-md mx-auto">
-          <h2 className="text-lg font-semibold text-blue-900 mb-2">
-            Day 0 - 项目骨架完成 ✅
+        
+        {/* Day 2 RAG功能展示 */}
+        <div className="bg-green-50 border border-green-200 rounded-lg p-6 max-w-4xl mx-auto mb-8">
+          <h2 className="text-2xl font-semibold text-green-900 mb-4">
+            Day 2 - RAG功能完成 ✅
           </h2>
-          <p className="text-blue-700">
-            后端API和前端界面已就绪，准备开始开发功能模块！
+          <p className="text-green-700 mb-4">
+            向量检索RAG系统已实现，现在可以生成包含详细POI介绍的旅行计划！
           </p>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="bg-white p-4 rounded-lg border">
+              <h3 className="font-semibold text-gray-800 mb-2">🔍 RAG功能特性</h3>
+              <ul className="text-sm text-gray-600 space-y-1">
+                <li>• 20条北京POI数据向量化存储</li>
+                <li>• Qwen Embedding API远程调用</li>
+                <li>• 智能相似度检索</li>
+                <li>• 详细POI介绍注入</li>
+              </ul>
+            </div>
+            
+            <div className="bg-white p-4 rounded-lg border">
+              <h3 className="font-semibold text-gray-800 mb-2">📊 系统状态</h3>
+              <div className="text-sm text-gray-600 space-y-2">
+                {poiStats ? (
+                  <div>
+                    <p>• POI数量: {poiStats.total_pois}</p>
+                    <p>• 向量维度: {poiStats.embedding_dimension}</p>
+                    <p>• 状态: {poiStats.status}</p>
+                    <p>• 嵌入服务: {poiStats.embedding_service}</p>
+                  </div>
+                ) : (
+                  <button 
+                    onClick={getPoiStats}
+                    className="bg-blue-500 text-white px-3 py-1 rounded text-xs hover:bg-blue-600"
+                  >
+                    获取统计信息
+                  </button>
+                )}
+                
+                <div className="mt-2">
+                  {embeddingStatus ? (
+                    <div className={`text-xs px-2 py-1 rounded ${
+                      embeddingStatus.status === 'available' 
+                        ? 'bg-green-100 text-green-800' 
+                        : 'bg-red-100 text-red-800'
+                    }`}>
+                      🔗 {embeddingStatus.message}
+                    </div>
+                  ) : (
+                    <button 
+                      onClick={getEmbeddingStatus}
+                      className="bg-green-500 text-white px-3 py-1 rounded text-xs hover:bg-green-600"
+                    >
+                      检查嵌入服务
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <button 
+            onClick={generateTrip}
+            disabled={isLoading}
+            className="bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isLoading ? '生成中...' : '🎯 生成旅行计划'}
+          </button>
         </div>
       </div>
+
+      {/* 旅行计划展示 */}
+      {tripPlan && (
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">
+              📋 {tripPlan.destination} {tripPlan.theme}
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 text-sm">
+              <div className="bg-gray-50 p-3 rounded">
+                <span className="font-semibold">行程天数:</span> {tripPlan.duration_days}天
+              </div>
+              <div className="bg-gray-50 p-3 rounded">
+                <span className="font-semibold">开始日期:</span> {tripPlan.start_date}
+              </div>
+              <div className="bg-gray-50 p-3 rounded">
+                <span className="font-semibold">总费用:</span> ¥{tripPlan.total_estimated_cost}
+              </div>
+            </div>
+
+            {/* 每日行程 */}
+            <div className="space-y-6">
+              {tripPlan.daily_plans.map((day, dayIndex) => (
+                <div key={dayIndex} className="border border-gray-200 rounded-lg p-4">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-3">
+                    📅 {day.date} - {day.day_title}
+                  </h3>
+                  
+                  <div className="space-y-4">
+                    {day.activities.map((activity, activityIndex) => (
+                      <div key={activityIndex} className="bg-blue-50 p-4 rounded-lg">
+                        <div className="flex justify-between items-start mb-2">
+                          <h4 className="font-semibold text-blue-900">{activity.name}</h4>
+                          <span className="text-sm bg-blue-200 text-blue-800 px-2 py-1 rounded">
+                            {activity.type}
+                          </span>
+                        </div>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                          <div>
+                            <p className="text-gray-600 mb-1">
+                              <span className="font-medium">📍 地址:</span> {activity.location}
+                            </p>
+                            <p className="text-gray-600 mb-1">
+                              <span className="font-medium">⏰ 时间:</span> {activity.start_time} - {activity.end_time}
+                            </p>
+                            <p className="text-gray-600 mb-1">
+                              <span className="font-medium">💰 费用:</span> ¥{activity.estimated_cost}
+                            </p>
+                          </div>
+                          
+                          <div>
+                            <p className="text-gray-600 mb-1">
+                              <span className="font-medium">💡 贴士:</span> {activity.tips}
+                            </p>
+                          </div>
+                        </div>
+                        
+                        <div className="mt-3 p-3 bg-white rounded border">
+                          <p className="text-sm text-gray-700 leading-relaxed">
+                            {activity.description}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  <div className="mt-4 p-3 bg-gray-50 rounded">
+                    <p className="text-sm text-gray-700">
+                      <span className="font-medium">📝 当日总结:</span> {day.daily_summary}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-1">
+                      <span className="font-medium">当日费用:</span> ¥{day.estimated_daily_cost}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 总体建议 */}
+            <div className="mt-6 p-4 bg-yellow-50 rounded-lg">
+              <h4 className="font-semibold text-yellow-900 mb-2">💡 总体建议</h4>
+              <ul className="text-sm text-yellow-800 space-y-1">
+                {tripPlan.general_tips.map((tip, index) => (
+                  <li key={index} className="flex items-start">
+                    <span className="mr-2">•</span>
+                    <span>{tip}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 } 

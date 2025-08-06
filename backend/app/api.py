@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from .schemas import TripRequest, TripPlan
 from .services import QwenService
+from .services.poi_embedding_service import POIEmbeddingService
 import os
 from dotenv import load_dotenv
 from .logging_config import setup_logging, get_logger
@@ -15,7 +16,7 @@ logger = get_logger(__name__)
 
 app = FastAPI(
     title="Travel Agent Pro API",
-    description="AI-Powered Weekend Trip Planner Backend (Powered by Qwen)",
+    description="AI-Powered Weekend Trip Planner Backend (Powered by Qwen + RAG)",
     version="1.0.0"
 )
 
@@ -30,6 +31,7 @@ app.add_middleware(
 
 # 初始化服务
 qwen_service = QwenService()
+poi_service = POIEmbeddingService()
 
 @app.get("/health")
 def health():
@@ -40,8 +42,42 @@ def health():
 @app.get("/")
 def root():
     """API根路径"""
-    logger.info("Root endpoint accessed")
     return {"message": "Travel Agent Pro Backend API"}
+
+@app.post("/init-poi-data")
+async def init_poi_data():
+    """初始化POI数据到向量数据库"""
+    logger.info("🚀 开始初始化POI数据")
+    
+    try:
+        success = poi_service.embed_and_store_pois()
+        if success:
+            stats = poi_service.get_collection_stats()
+            logger.info(f"✅ POI数据初始化成功: {stats}")
+            return {
+                "status": "success",
+                "message": "POI数据初始化成功",
+                "stats": stats
+            }
+        else:
+            logger.error("❌ POI数据初始化失败")
+            raise HTTPException(status_code=500, detail="POI数据初始化失败")
+            
+    except Exception as e:
+        logger.error(f"❌ POI数据初始化出错: {e}")
+        raise HTTPException(status_code=500, detail=f"POI数据初始化出错: {e}")
+
+@app.get("/poi-stats")
+async def get_poi_stats():
+    """获取POI向量数据库统计信息"""
+    logger.info("📊 获取POI统计信息")
+    
+    try:
+        stats = poi_service.get_collection_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"❌ 获取POI统计信息失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取POI统计信息失败: {e}")
 
 @app.post("/generate-trip", response_model=TripPlan)
 async def generate_trip(request: TripRequest):
@@ -113,101 +149,108 @@ async def generate_trip_demo(request: TripRequest):
                         "start_time": "09:00",
                         "end_time": "12:00",
                         "duration_minutes": 180,
-                        "description": "参观明清两代皇宫，感受中华文明的博大精深",
+                        "description": "故宫博物院，旧称紫禁城，是中国明清两代的皇家宫殿，世界上现存规模最大、保存最完整的木质结构古建筑群。故宫占地面积72万平方米，建筑面积约15万平方米，有大小宫殿七十多座，房屋九千余间。故宫博物院收藏了大量珍贵文物，是中国最大的古代文化艺术博物馆。",
                         "estimated_cost": 60,
-                        "tips": "建议提前网上购票，避开人流高峰时段"
-                    },
-                    {
-                        "name": "北京烤鸭午餐",
-                        "type": "dining",
-                        "location": "全聚德前门店",
-                        "start_time": "12:30",
-                        "end_time": "13:30",
-                        "duration_minutes": 60,
-                        "description": "品尝正宗北京烤鸭，体验京城美食文化",
-                        "estimated_cost": 200,
-                        "tips": "推荐点半只烤鸭配烙饼和蘸料"
+                        "tips": "建议提前网上预约，避开节假日高峰"
                     },
                     {
                         "name": "天安门广场",
                         "type": "sightseeing",
-                        "location": "北京市东城区东长安街",
+                        "location": "北京市东城区天安门广场",
                         "start_time": "14:00",
-                        "end_time": "15:30",
-                        "duration_minutes": 90,
-                        "description": "参观世界最大的城市广场，感受国家的庄严与壮观",
+                        "end_time": "16:00",
+                        "duration_minutes": 120,
+                        "description": "天安门广场是世界上最大的城市广场之一，面积约44万平方米。广场中央矗立着人民英雄纪念碑，南侧是毛主席纪念堂，北侧是天安门城楼，东侧是中国国家博物馆，西侧是人民大会堂。这里是北京的地标性建筑，也是重要的政治和文化中心。",
                         "estimated_cost": 0,
-                        "tips": "需要安检，不要携带危险物品"
-                    },
-                    {
-                        "name": "景山公园",
-                        "type": "sightseeing",
-                        "location": "北京市西城区景山西街44号",
-                        "start_time": "16:00",
-                        "end_time": "17:30",
-                        "duration_minutes": 90,
-                        "description": "登顶俯瞰紫禁城全景，欣赏北京城市风貌",
-                        "estimated_cost": 10,
-                        "tips": "黄昏时分景色最美，适合拍照"
+                        "tips": "广场安检严格，请携带身份证"
                     }
                 ],
-                "daily_summary": "第一天探索北京古都核心区域，感受历史文化底蕴",
-                "estimated_daily_cost": 270
+                "daily_summary": "上午游览故宫博物院，感受明清皇家建筑的宏伟壮观；下午参观天安门广场，体验北京的地标性建筑。",
+                "estimated_daily_cost": 60
             },
             {
                 "date": end_date,
-                "day_title": "现代北京体验",
+                "day_title": "园林文化体验",
                 "activities": [
                     {
-                        "name": "天坛公园",
+                        "name": "颐和园",
                         "type": "sightseeing",
-                        "location": "北京市东城区天坛路甲1号",
+                        "location": "北京市海淀区新建宫门路19号",
                         "start_time": "09:00",
-                        "end_time": "11:00",
-                        "duration_minutes": 120,
-                        "description": "参观明清皇帝祭天的神圣场所，欣赏古代建筑艺术",
-                        "estimated_cost": 35,
-                        "tips": "早晨游览可以看到市民晨练，体验老北京生活"
-                    },
-                    {
-                        "name": "王府井大街",
-                        "type": "shopping",
-                        "location": "北京市东城区王府井大街",
-                        "start_time": "11:30",
-                        "end_time": "14:00",
-                        "duration_minutes": 150,
-                        "description": "逛北京最著名的商业街，购买特色纪念品",
-                        "estimated_cost": 300,
-                        "tips": "可以品尝王府井小吃街的各种传统小食"
+                        "end_time": "12:00",
+                        "duration_minutes": 180,
+                        "description": "颐和园是清代皇家园林，被誉为'皇家园林博物馆'。园内以昆明湖和万寿山为基址，以杭州西湖为蓝本，汲取江南园林的设计手法而建成的一座大型山水园林。园内建筑精美，景色优美，是中国古典园林的代表作。",
+                        "estimated_cost": 30,
+                        "tips": "建议从东宫门进入，可以租船游湖"
                     },
                     {
                         "name": "什刹海",
-                        "type": "culture",
-                        "location": "北京市西城区什刹海",
-                        "start_time": "15:00",
+                        "type": "sightseeing",
+                        "location": "北京市西城区什刹海地区",
+                        "start_time": "14:00",
                         "end_time": "17:00",
-                        "duration_minutes": 120,
-                        "description": "漫步历史街区，感受老北京胡同文化",
-                        "estimated_cost": 50,
-                        "tips": "可以租自行车环湖骑行，体验不同视角"
+                        "duration_minutes": 180,
+                        "description": "什刹海是北京城内最大的历史文化保护区，由前海、后海和西海三个湖泊组成。这里保存着大量传统胡同和四合院，是体验老北京风情的最佳去处。夏季可以划船，冬季可以滑冰，四季都有不同的美景。",
+                        "estimated_cost": 0,
+                        "tips": "可以体验胡同游，感受老北京生活"
                     }
                 ],
-                "daily_summary": "第二天体验现代北京与传统文化的完美融合",
-                "estimated_daily_cost": 385
+                "daily_summary": "上午游览颐和园，欣赏皇家园林的精致美景；下午漫步什刹海，体验老北京的传统风情。",
+                "estimated_daily_cost": 30
             }
         ],
-        "total_estimated_cost": 655,
+        "total_estimated_cost": 90,
         "general_tips": [
-            "准备舒适的步行鞋，景点间需要较多步行",
-            "关注天气预报，携带雨具或防晒用品",
-            "提前了解景点开放时间，合理规划行程",
-            "保持手机电量充足，使用地图导航",
-            "尊重当地文化和习俗，文明旅游"
+            "北京春季天气多变，建议携带外套",
+            "景点门票建议提前网上预订",
+            "地铁是北京最便捷的交通工具",
+            "注意保管好随身物品，特别是在人流密集的景点"
         ]
     }
 
-    # 使用 Pydantic 验证数据结构
-    trip_plan = TripPlan(**demo_plan)
+    return TripPlan(**demo_plan) 
 
-    logger.info(f"✅ 成功生成演示旅行计划: {request.destination}")
-    return trip_plan 
+@app.get("/embedding-status")
+async def get_embedding_status():
+    """获取嵌入服务状态"""
+    logger.info("🔍 检查嵌入服务状态")
+    
+    try:
+        from .services.embedding_service import EmbeddingService
+        embedding_service = EmbeddingService()
+        
+        # 检查API Key
+        api_key = os.getenv("DASHSCOPE_API_KEY")
+        if not api_key:
+            return {
+                "status": "error",
+                "message": "DASHSCOPE_API_KEY 未设置",
+                "embedding_service": "Qwen Embedding API",
+                "api_key_configured": False
+            }
+        
+        # 测试连接
+        if embedding_service.test_connection():
+            dimension = embedding_service.get_embedding_dimension()
+            return {
+                "status": "available",
+                "message": "Qwen Embedding API 连接正常",
+                "embedding_service": "Qwen Embedding API",
+                "api_key_configured": True,
+                "embedding_dimension": dimension
+            }
+        else:
+            return {
+                "status": "unavailable",
+                "message": "Qwen Embedding API 连接失败",
+                "embedding_service": "Qwen Embedding API",
+                "api_key_configured": True
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ 检查嵌入服务状态失败: {e}")
+        return {
+            "status": "error",
+            "message": f"检查嵌入服务状态失败: {e}",
+            "embedding_service": "Qwen Embedding API"
+        } 
