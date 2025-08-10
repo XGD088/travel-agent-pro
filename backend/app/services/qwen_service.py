@@ -3,6 +3,7 @@ import os
 from typing import Optional
 from openai import OpenAI
 from ..schemas import TripRequest, TripPlan
+from ..schemas import ActivityType
 from ..logging_config import get_logger
 from .poi_embedding_service import POIEmbeddingService
 
@@ -36,6 +37,56 @@ class QwenService:
             )
             logger.debug("✅ Qwen 客户端创建成功")
         return self.client
+
+    def _normalize_trip_data(self, data: dict) -> dict:
+        """规范化模型输出，避免类型不一致导致校验失败。"""
+        if not isinstance(data, dict):
+            return data
+        # general_tips: 需要是字符串列表
+        gt = data.get("general_tips")
+        if gt is None:
+            data["general_tips"] = []
+        elif isinstance(gt, str):
+            # 简单按换行/分号拆分；若无法拆分，就包一层列表
+            parts = [p.strip() for p in gt.replace("；", ";").replace("\n", ";").split(";") if p.strip()]
+            data["general_tips"] = parts if parts else [gt]
+        elif isinstance(gt, list):
+            data["general_tips"] = [str(x) for x in gt]
+        else:
+            data["general_tips"] = [str(gt)]
+
+        # daily_plans.activities 内 tips 需为字符串
+        for day in data.get("daily_plans", []) or []:
+            # 费用字段兜底转 int
+            if isinstance(day.get("estimated_daily_cost"), str) and day["estimated_daily_cost"].isdigit():
+                day["estimated_daily_cost"] = int(day["estimated_daily_cost"])
+            for act in day.get("activities", []) or []:
+                tips = act.get("tips")
+                if isinstance(tips, list):
+                    act["tips"] = "；".join([str(x) for x in tips])
+                elif tips is not None and not isinstance(tips, str):
+                    act["tips"] = str(tips)
+                # 费用兜底转 int
+                ec = act.get("estimated_cost")
+                if isinstance(ec, str) and ec.isdigit():
+                    act["estimated_cost"] = int(ec)
+        # 总费用兜底转 int
+        tec = data.get("total_estimated_cost")
+        if isinstance(tec, str) and tec.isdigit():
+            data["total_estimated_cost"] = int(tec)
+        return data
+
+    def _strip_accommodation(self, trip: TripPlan, allow_accommodation: bool) -> TripPlan:
+        """根据策略移除住宿类活动。"""
+        if allow_accommodation:
+            return trip
+        for day in trip.daily_plans:
+            day.activities = [
+                act for act in day.activities
+                if getattr(act, "type", None) != ActivityType.ACCOMMODATION
+                and not (isinstance(getattr(act, "name", ""), str) and ("酒店" in act.name or "民宿" in act.name or "宾馆" in act.name))
+            ]
+        return trip
 
     def generate_trip_plan(self, request: TripRequest) -> TripPlan:
         """生成旅行计划"""
@@ -95,7 +146,10 @@ class QwenService:
                 trip_data = json.loads(response_text)
 
             logger.info("✅ JSON 解析成功")
-            trip_plan = TripPlan(**trip_data)
+            trip_plan = TripPlan(**self._normalize_trip_data(trip_data))
+            # 若请求未显式包含住宿，则剔除住宿活动
+            allow = bool(getattr(request, "include_accommodation", False))
+            trip_plan = self._strip_accommodation(trip_plan, allow_accommodation=allow)
 
             logger.info(f"🎉 成功生成旅行计划: {request.destination}")
             logger.debug(f"计划概要: {trip_plan.destination}, {len(trip_plan.daily_plans)}天, 总费用: {trip_plan.total_estimated_cost}元")
@@ -109,6 +163,112 @@ class QwenService:
         except Exception as e:
             logger.error(f"❌ 生成旅行计划时出错: {e}", exc_info=True)
             raise ValueError(f"生成旅行计划时出错: {e}")
+
+    # ============ 自由文本支持（方案三：混合检索） ============
+    def extract_request_from_free_text(self, text: str) -> TripRequest:
+        """使用 LLM 从自由文本中抽取 TripRequest 关键字段。"""
+        try:
+            prompt = (
+                "请从用户的自由文本旅行需求中严格提取以下 JSON 字段，不要增加多余内容：\n"
+                "{\n"
+                "  \"destination\": \"城市名（必填）\",\n"
+                "  \"duration_days\": 2,\n"
+                "  \"theme\": \"主题（可选，无则用\\\"休闲旅游\\\"）\",\n"
+                "  \"budget\": 1000,\n"
+                "  \"interests\": [\"兴趣关键字1\", \"兴趣关键字2\"],\n"
+                "  \"start_date\": \"YYYY-MM-DD 或 null\"\n"
+                "}\n\n"
+                f"用户输入：{text}\n"
+                "只输出 JSON。"
+            )
+            response = self._get_client().chat.completions.create(
+                model="qwen-plus",
+                messages=[
+                    {"role": "system", "content": "你是一个提取器，只输出严格 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                max_tokens=400,
+            )
+            content = response.choices[0].message.content
+            start_idx = content.find('{')
+            end_idx = content.rfind('}') + 1
+            data = json.loads(content[start_idx:end_idx])
+            # 默认值兜底
+            if not data.get("theme"):
+                data["theme"] = "休闲旅游"
+            return TripRequest(**data)
+        except Exception as e:
+            logger.warning(f"自由文本抽取失败，回退最小请求: {e}")
+            # 极端回退：仅猜测目的地为北京、2天
+            return TripRequest(destination="北京", duration_days=2, theme="休闲旅游")
+
+    def mixed_retrieve_pois(self, request: TripRequest, free_text: str, n_results: int = 10) -> str:
+        """混合检索：城市/类型过滤 + 语义检索 + 关键词加权，返回拼接上下文。"""
+        # 语义检索查询语句
+        semantic_query = f"{request.destination}{request.theme or ''}{' '.join(request.interests or [])} {free_text}"
+        results = self.poi_service.search_pois_by_query(semantic_query, n_results)
+
+        # 关键词加权（简单版）：目的地/必提景点命中加分
+        keyword_terms = [request.destination] + (request.interests or [])
+        def score(result):
+            base = 1 - result.get('distance', 0)
+            meta = result.get('poi_info') or result.get('metadata') or {}
+            name = (meta.get('name') or '').lower()
+            tags = (meta.get('tags') or '').lower()
+            bonus = sum(0.05 for t in keyword_terms if t and (t.lower() in name or t.lower() in tags))
+            return base + bonus
+
+        results = sorted(results, key=score, reverse=True)[:n_results]
+
+        # 过滤城市（如果 metadata 存有 address，可做简单包含过滤）
+        filtered = []
+        for r in results:
+            meta = r.get('poi_info') or r.get('metadata') or {}
+            addr = meta.get('address', '')
+            if request.destination and request.destination not in addr:
+                # 允许少量越界，先不过滤，真实项目可加行政区解析
+                pass
+            filtered.append(r)
+
+        # 拼接上下文
+        parts = []
+        for r in filtered:
+            meta = r.get('poi_info') or r.get('metadata') or {}
+            parts.append(
+                f"景点名称: {meta.get('name')}\n类型: {meta.get('type')}\n地址: {meta.get('address')}\n门票: {meta.get('ticket_price')}元\n营业时间: {meta.get('business_hours')}\n标签: {meta.get('tags')}\n——"
+            )
+        return "\n".join(parts)
+
+    def plan_from_free_text(self, text: str) -> TripPlan:
+        """自由文本 → 抽取 TripRequest → 混合检索 POI → 调用主流程生成计划。"""
+        request = self.extract_request_from_free_text(text)
+        poi_context = self.mixed_retrieve_pois(request, text, n_results=10)
+        prompt = self._build_prompt(request, poi_context)
+        # 复用主流程生成
+        try:
+            response = self._get_client().chat.completions.create(
+                model="qwen-plus",
+                messages=[
+                    {"role": "system", "content": "你是一位专业的旅行规划师，只返回 JSON。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                max_tokens=4000,
+            )
+            content = response.choices[0].message.content
+            start_idx = content.find('{')
+            end_idx = content.rfind('}') + 1
+            data = json.loads(content[start_idx:end_idx])
+            trip = TripPlan(**self._normalize_trip_data(data))
+            # 自由文本：若文本包含住宿关键词，保留住宿，否则剔除
+            keywords = ["住宿", "酒店", "民宿", "宾馆", "hotel"]
+            allow_accommodation = any(k in (text or "").lower() for k in keywords)
+            trip = self._strip_accommodation(trip, allow_accommodation)
+            return trip
+        except Exception as e:
+            logger.error(f"❌ 自由文本生成失败: {e}")
+            raise ValueError(f"自由文本生成失败: {e}")
 
     def _get_poi_context(self, request: TripRequest) -> str:
         """获取相关POI上下文信息"""
@@ -179,7 +339,7 @@ class QwenService:
 请基于以上景点信息来规划行程，确保推荐的景点真实存在且信息准确。
 """
 
-        # JSON Schema 要求
+        # JSON Schema 要求（并禁止虚构住宿）
         prompt += f"""
 请返回严格符合以下JSON Schema的旅行计划：
 
@@ -224,7 +384,8 @@ class QwenService:
 7. 优先使用提供的景点信息
 8. 只返回JSON，不要任何其他文字说明
 9. tips字段必须是字符串，不能是数组
-10. 确保所有字段类型正确
+ 10. 确保所有字段类型正确
+ 11. 不要包含任何住宿/酒店安排，也不要输出具体酒店名称或 accommodation 类型的活动，除非用户在输入中明确提出住宿需求或指定酒店。
 
 请严格按照上述JSON格式返回旅行计划："""
 

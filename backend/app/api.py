@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from .schemas import TripRequest, TripPlan
+from .schemas import TripRequest, TripPlan, FreeTextPlanRequest
 from .services import QwenService
 from .services.poi_embedding_service import POIEmbeddingService
 from .services import AmapService
@@ -134,6 +134,18 @@ async def generate_trip(request: TripRequest):
 
     except Exception as e:
         logger.error(f"❌ 意外错误: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/plan-from-text", response_model=TripPlan)
+async def plan_from_text(payload: FreeTextPlanRequest):
+    """自由文本 → 混合检索 → 生成行程"""
+    try:
+        trip = qwen_service.plan_from_free_text(payload.text)
+        return trip
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"❌ 自由文本生成出错: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/trip-schema")

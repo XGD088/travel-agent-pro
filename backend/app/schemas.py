@@ -90,3 +90,9 @@ class TripRequest(BaseModel):
     budget: Optional[int] = Field(None, description="预算（元）")
     interests: Optional[List[str]] = Field([], description="兴趣爱好")
     start_date: Optional[str] = Field(None, description="开始日期 (YYYY-MM-DD)") 
+    include_accommodation: Optional[bool] = Field(False, description="是否包含住宿/酒店安排（默认不包含）")
+
+
+class FreeTextPlanRequest(BaseModel):
+    """自由文本行程请求模型"""
+    text: str = Field(..., description="用户自由文本需求，例如：‘想周末在北京两天亲子游，预算1000，想去故宫和颐和园。’")

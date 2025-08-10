@@ -40,21 +40,22 @@ export default function Home() {
   const [startDate, setStartDate] = useState<string>(
     () => new Date().toISOString().slice(0, 10)
   )
+  const [freeText, setFreeText] = useState<string>("")
 
   const generateTrip = async () => {
     setIsLoading(true)
     try {
-      const response = await fetch('http://localhost:8000/generate-trip', {
+      // 使用自由文本接口：将选择的开始日期一并追加，提升解析准确度
+      const composed = freeText
+        ? `${freeText}\n开始日期: ${startDate}`
+        : `在北京${startDate}开始的2天旅行计划`
+
+      const response = await fetch('http://localhost:8000/plan-from-text', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          destination: '北京',
-          duration_days: 2,
-          theme: '文化古都之旅',
-          start_date: startDate
-        })
+        body: JSON.stringify({ text: composed })
       })
       
       if (response.ok) {
@@ -186,13 +187,23 @@ export default function Home() {
           </div>
           
           <div className="flex flex-col md:flex-row items-start md:items-end gap-3">
-            <div className="text-left">
+            <div className="text-left w-full md:w-auto md:min-w-[260px]">
               <label className="block text-sm text-gray-700 mb-1">开始日期</label>
               <input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="border rounded px-3 py-2 text-sm"
+                className="border rounded px-3 py-2 text-sm w-full"
+              />
+            </div>
+            <div className="flex-1 w-full">
+              <label className="block text-sm text-gray-700 mb-1">自由文本需求</label>
+              <textarea
+                value={freeText}
+                onChange={(e) => setFreeText(e.target.value)}
+                placeholder="例如：想周末在北京两天亲子游，预算1000，想去故宫和颐和园。"
+                rows={3}
+                className="w-full border rounded px-3 py-2 text-sm"
               />
             </div>
             <button 
@@ -200,7 +211,7 @@ export default function Home() {
               disabled={isLoading}
               className="bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? '生成中...' : '🎯 生成旅行计划'}
+              {isLoading ? '生成中...' : '🎯 生成旅行计划（自由文本）'}
             </button>
           </div>
         </div>
