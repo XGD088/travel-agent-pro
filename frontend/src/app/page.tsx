@@ -19,8 +19,11 @@ interface TripPlan {
       end_time: string
       duration_minutes: number
       description: string
-      estimated_cost: number
-      tips: string
+      estimated_cost: number | null
+      tips: string | null
+      // Day 3 fields (optional)
+      distance_km_from_prev?: number | null
+      drive_time_min_from_prev?: number | null
     }>
     daily_summary: string
     estimated_daily_cost: number
@@ -34,6 +37,9 @@ export default function Home() {
   const [tripPlan, setTripPlan] = useState<TripPlan | null>(null)
   const [poiStats, setPoiStats] = useState<any>(null)
   const [embeddingStatus, setEmbeddingStatus] = useState<any>(null)
+  const [startDate, setStartDate] = useState<string>(
+    () => new Date().toISOString().slice(0, 10)
+  )
 
   const generateTrip = async () => {
     setIsLoading(true)
@@ -46,13 +52,30 @@ export default function Home() {
         body: JSON.stringify({
           destination: '北京',
           duration_days: 2,
-          theme: '文化古都之旅'
+          theme: '文化古都之旅',
+          start_date: startDate
         })
       })
       
       if (response.ok) {
         const data = await response.json()
-        setTripPlan(data)
+        // Day 3: 调用后端校验接口为行程打上距离/时长
+        try {
+          const validatedResp = await fetch('http://localhost:8000/validate-trip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          })
+          if (validatedResp.ok) {
+            const validated = await validatedResp.json()
+            setTripPlan(validated)
+          } else {
+            // 兜底：如果校验失败，仍展示原始计划
+            setTripPlan(data)
+          }
+        } catch {
+          setTripPlan(data)
+        }
       } else {
         console.error('Failed to generate trip plan')
         // 显示错误信息
@@ -162,13 +185,24 @@ export default function Home() {
             </div>
           </div>
           
-          <button 
-            onClick={generateTrip}
-            disabled={isLoading}
-            className="bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? '生成中...' : '🎯 生成旅行计划'}
-          </button>
+          <div className="flex flex-col md:flex-row items-start md:items-end gap-3">
+            <div className="text-left">
+              <label className="block text-sm text-gray-700 mb-1">开始日期</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="border rounded px-3 py-2 text-sm"
+              />
+            </div>
+            <button 
+              onClick={generateTrip}
+              disabled={isLoading}
+              className="bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isLoading ? '生成中...' : '🎯 生成旅行计划'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -218,17 +252,26 @@ export default function Home() {
                               <span className="font-medium">⏰ 时间:</span> {activity.start_time} - {activity.end_time}
                             </p>
                             <p className="text-gray-600 mb-1">
-                              <span className="font-medium">💰 费用:</span> ¥{activity.estimated_cost}
+                              <span className="font-medium">💰 费用:</span> ¥{activity.estimated_cost ?? '—'}
                             </p>
                           </div>
                           
                           <div>
                             <p className="text-gray-600 mb-1">
-                              <span className="font-medium">💡 贴士:</span> {activity.tips}
+                              <span className="font-medium">💡 贴士:</span> {activity.tips ?? '—'}
                             </p>
                           </div>
                         </div>
                         
+                        {/* Day 3: 相邻活动驾车距离/时长 */}
+                        {activityIndex > 0 &&
+                          activity.distance_km_from_prev != null &&
+                          activity.drive_time_min_from_prev != null && (
+                          <div className="mt-2 text-xs text-gray-700">
+                            🚗 距上个点 {activity.distance_km_from_prev} km · 约 {activity.drive_time_min_from_prev} 分
+                          </div>
+                        )}
+
                         <div className="mt-3 p-3 bg-white rounded border">
                           <p className="text-sm text-gray-700 leading-relaxed">
                             {activity.description}

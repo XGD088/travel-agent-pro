@@ -4,6 +4,7 @@ langchain>=0.2.0
 openai
 pymilvus
 python-dotenv
+requests
 # RAG相关依赖
 chromadb>=0.4.0
 sentence-transformers>=2.2.0

@@ -3,9 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from .schemas import TripRequest, TripPlan
 from .services import QwenService
 from .services.poi_embedding_service import POIEmbeddingService
+from .services import AmapService
 import os
 from dotenv import load_dotenv
 from .logging_config import setup_logging, get_logger
+from .services.route_validator_service import RouteValidatorService
 
 # 加载环境变量
 load_dotenv()
@@ -32,6 +34,26 @@ app.add_middleware(
 # 初始化服务
 qwen_service = QwenService()
 poi_service = POIEmbeddingService()
+amap_service = AmapService()
+route_validator = RouteValidatorService(amap_service)
+
+@app.on_event("startup")
+async def auto_init_poi_on_startup():
+    """应用启动时自动初始化POI向量库（仅当当前为空时）。"""
+    try:
+        count = poi_service.vector_service.get_collection_count()
+        if count == 0:
+            logger.info("🌱 启动检测到POI向量库为空，开始初始化...")
+            ok = poi_service.embed_and_store_pois()
+            if ok:
+                stats = poi_service.get_collection_stats()
+                logger.info(f"✅ 启动初始化完成: {stats}")
+            else:
+                logger.warning("⚠️ 启动初始化失败，后续可手动调用 /init-poi-data 重试")
+        else:
+            logger.info(f"✅ 启动检测到已有POI数据: {count} 条，跳过初始化")
+    except Exception as e:
+        logger.warning(f"⚠️ 启动期间检查/初始化POI失败: {e}")
 
 @app.get("/health")
 def health():
@@ -254,3 +276,41 @@ async def get_embedding_status():
             "message": f"检查嵌入服务状态失败: {e}",
             "embedding_service": "Qwen Embedding API"
         } 
+
+@app.get("/amap-status")
+async def get_amap_status():
+    """检查高德 API 连接与 Key 状态"""
+    logger.info("🛰️ 检查高德 API 状态")
+    try:
+        result = amap_service.test_connection()
+        return result
+    except Exception as e:
+        logger.error(f"❌ 高德 API 检查失败: {e}")
+        return {"status": "error", "message": str(e)}
+
+@app.get("/amap-geocode")
+async def amap_geocode(address: str, city: str = "北京"):
+    """地理编码测试接口"""
+    logger.info(f"📍 地理编码: address={address}, city={city}")
+    coords = amap_service.geocode(address, city=city)
+    if not coords:
+        raise HTTPException(status_code=404, detail="未找到坐标")
+    lng, lat = coords
+    return {"address": address, "city": city, "lng": lng, "lat": lat}
+
+@app.get("/amap-geocode-debug")
+async def amap_geocode_debug(address: str, city: str = "北京"):
+    """返回高德原始响应以便调试"""
+    logger.info(f"🧪 地理编码调试: address={address}, city={city}")
+    return amap_service.geocode_debug(address, city=city)
+
+@app.post("/validate-trip", response_model=TripPlan)
+async def validate_trip(plan: TripPlan):
+    """对给定行程进行路线距离与时长标注"""
+    try:
+        logger.info("🛣️ 开始路线距离校验与标注")
+        annotated = route_validator.annotate_trip(plan)
+        return annotated
+    except Exception as e:
+        logger.error(f"❌ 路线标注失败: {e}")
+        raise HTTPException(status_code=500, detail="路线标注失败") 

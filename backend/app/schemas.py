@@ -25,6 +25,9 @@ class Activity(BaseModel):
     description: str = Field(..., description="活动描述")
     estimated_cost: Optional[int] = Field(None, description="预估费用（元）")
     tips: Optional[str] = Field(None, description="小贴士")
+    # 新增（可选）：与上一个活动之间的距离与驾车时长
+    distance_km_from_prev: Optional[float] = Field(None, description="与上一个活动之间的驾车距离（公里）")
+    drive_time_min_from_prev: Optional[int] = Field(None, description="与上一个活动之间的驾车时长（分钟）")
 
 class DayPlan(BaseModel):
     """单日行程模型"""
