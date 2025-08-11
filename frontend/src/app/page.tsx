@@ -24,12 +24,39 @@ interface TripPlan {
       // Day 3 fields (optional)
       distance_km_from_prev?: number | null
       drive_time_min_from_prev?: number | null
+      // Day 4 fields (optional)
+      open_ok?: boolean | null
+      open_hours_raw?: string | null
+      closed_reason?: string | null
+      replaced_from?: string | null
+      open_hours_explain?: string | null
+      replaced_from_open_hours_raw?: string | null
+      replacement_reason?: string | null
     }>
     daily_summary: string
     estimated_daily_cost: number
   }>
   total_estimated_cost: number
   general_tips: string[]
+  // 追加：规划思路（来自后端简单生成或前端拼装）
+  plan_rationale?: string
+}
+// 轻量 Tooltip 组件（无第三方库）
+function Tooltip({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <span className="relative inline-flex items-center"
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+    >
+      {children}
+      {visible && (
+        <div className="absolute z-20 top-full left-1/2 -translate-x-1/2 mt-1 max-w-xs text-xs text-gray-800 bg-white border border-gray-200 shadow-lg rounded p-2 whitespace-pre-wrap">
+          {label}
+        </div>
+      )}
+    </span>
+  )
 }
 
 export default function Home() {
@@ -248,7 +275,48 @@ export default function Home() {
                     {day.activities.map((activity, activityIndex) => (
                       <div key={activityIndex} className="bg-blue-50 p-4 rounded-lg">
                         <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-semibold text-blue-900">{activity.name}</h4>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-semibold text-blue-900">{activity.name}</h4>
+                            {activity.closed_reason === 'replaced' && (
+                              <Tooltip
+                                label={
+                                  <div className="space-y-1">
+                                    <div>原活动：{activity.replaced_from || '—'}</div>
+                                    <div>原营业：{activity.replaced_from_open_hours_raw || '未知'}</div>
+                                    <div>理由：{activity.replacement_reason || '因闭园自动替换'}</div>
+                                    {activity.replacement_candidates && activity.replacement_candidates.length > 0 && (
+                                      <div className="mt-1">
+                                        <div className="font-medium">候选概览：</div>
+                                        <ul className="list-disc ml-4">
+                                          {activity.replacement_candidates.slice(0,3).map((c, i) => (
+                                            <li key={i}>
+                                              {c.name} · sim {c.similarity?.toFixed?.(2)} · score {c.score?.toFixed?.(2)} · Δ通勤 {c.commute_delta_min != null ? `${c.commute_delta_min.toFixed?.(0)}m` : '—'}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    )}
+                                  </div>
+                                }
+                              >
+                                <span className="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-800">已替换</span>
+                              </Tooltip>
+                            )}
+                            {activity.open_ok === true && (
+                              <span className="text-xs text-green-700">✅ 开门{activity.open_hours_raw ? ` · ${activity.open_hours_raw}` : ''}</span>
+                            )}
+                            {activity.open_ok === false && (
+                              <Tooltip label={activity.open_hours_explain || '营业时间不覆盖计划时段'}>
+                                <span className="text-xs text-amber-700">
+                                  ⚠️ {activity.closed_reason === 'replaced' ? `原 ${activity.replaced_from || '该点'} 闭园，已替换` : '闭园/需线下确认'}
+                                  {activity.open_hours_raw ? ` · ${activity.open_hours_raw}` : ''}
+                                </span>
+                              </Tooltip>
+                            )}
+                            {activity.open_ok == null && (
+                              <span className="text-xs text-gray-600">ℹ️ 营业时间未知</span>
+                            )}
+                          </div>
                           <span className="text-sm bg-blue-200 text-blue-800 px-2 py-1 rounded">
                             {activity.type}
                           </span>
@@ -315,6 +383,14 @@ export default function Home() {
                   </li>
                 ))}
               </ul>
+            </div>
+
+            {/* 规划思路 */}
+            <div className="mt-3 p-4 bg-blue-50 rounded-lg">
+              <h4 className="font-semibold text-blue-900 mb-1">🧭 规划思路</h4>
+              <p className="text-sm text-blue-900/80">
+                {tripPlan.plan_rationale || '基于你的主题偏好与城市热门 POI，通过向量检索筛出相似度高的候选；按地理相邻与时段衔接减少通勤；若营业时间不覆盖则自动选取同类型且更易到达的备选。'}
+              </p>
             </div>
           </div>
         </div>

@@ -25,7 +25,7 @@ app = FastAPI(
 # 添加 CORS 中间件以允许前端跨域访问
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # 允许前端域名
+    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # 允许前端域名（3001 为端口回退时使用）
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

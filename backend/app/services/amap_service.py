@@ -18,6 +18,7 @@ class AmapService:
         self.base_geocode_url = "https://restapi.amap.com/v3/geocode/geo"
         self.base_distance_url = "https://restapi.amap.com/v3/distance"
         self.base_place_url = "https://restapi.amap.com/v3/place/text"
+        self._place_cache: Dict[str, dict] = {}
 
     def _ensure_api_key(self) -> None:
         if not self.api_key:
@@ -74,6 +75,53 @@ class AmapService:
             logger.warning(f"地点搜索兜底无结果: {data2}")
         except requests.RequestException as exc:
             logger.error(f"地点搜索请求出错: {exc}")
+        return None
+
+    def get_poi_open_hours(self, keyword: str, city: Optional[str] = None) -> Optional[str]:
+        """Try to fetch POI open hours from AMap place search by a keyword (name/address).
+        Returns raw business hours string or None when missing.
+        """
+        self._ensure_api_key()
+        cache_key = f"{keyword}|{city or ''}"
+        if cache_key in self._place_cache:
+            place = self._place_cache[cache_key]
+        else:
+            params: Dict[str, str] = {
+                "key": self.api_key,
+                "keywords": keyword,
+                "offset": "1",
+                "page": "1",
+                "output": "json",
+            }
+            if city:
+                params["city"] = city
+            try:
+                resp = requests.get(self.base_place_url, params=params, timeout=self.timeout_seconds)
+                resp.raise_for_status()
+                data = resp.json()
+                if data.get("status") == "1" and data.get("pois"):
+                    place = data["pois"][0]
+                    self._place_cache[cache_key] = place
+                else:
+                    logger.info("No POI found for business hours query")
+                    return None
+            except requests.RequestException as exc:
+                logger.error(f"Failed to fetch place for hours: {exc}")
+                return None
+
+        # Common fields in AMap POI: business_hours / opentime / opentime_week (varies)
+        for field in ["business_hours", "opentime", "opentime_week", "biz_ext"]:
+            value = place.get(field)
+            if isinstance(value, str) and value.strip():
+                logger.debug("Open hours fetched (field=%s): %s", field, value)
+                return value.strip()
+            if field == "biz_ext" and isinstance(value, dict):
+                # Some POIs nest open time under biz_ext.open_time
+                inner = value.get("open_time") or value.get("open_hours")
+                if isinstance(inner, str) and inner.strip():
+                    logger.debug("Open hours fetched (biz_ext.open_time): %s", inner)
+                    return inner.strip()
+        logger.info("Open hours missing in POI response")
         return None
 
     def driving_distance(self, origin: Tuple[float, float], destination: Tuple[float, float]) -> Optional[Tuple[int, int]]:

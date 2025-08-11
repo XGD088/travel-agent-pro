@@ -14,6 +14,15 @@ class ActivityType(str, Enum):
     CULTURE = "culture"          # 文化
     NATURE = "nature"           # 自然景观
 
+class ReplacementCandidate(BaseModel):
+    """替换候选信息"""
+    name: str
+    similarity: float
+    score: float
+    commute_delta_min: Optional[float] = Field(None, description="相对原计划的通勤变化（分钟）")
+    open_hours_raw: Optional[str] = None
+    open_ok: Optional[bool] = None
+
 class Activity(BaseModel):
     """单个活动模型"""
     name: str = Field(..., description="活动名称")
@@ -28,6 +37,16 @@ class Activity(BaseModel):
     # 新增（可选）：与上一个活动之间的距离与驾车时长
     distance_km_from_prev: Optional[float] = Field(None, description="与上一个活动之间的驾车距离（公里）")
     drive_time_min_from_prev: Optional[int] = Field(None, description="与上一个活动之间的驾车时长（分钟）")
+    # 新增（可选）：营业时间校验
+    open_ok: Optional[bool] = Field(None, description="该活动时间段内是否开门")
+    open_hours_raw: Optional[str] = Field(None, description="营业时间原始字符串")
+    closed_reason: Optional[str] = Field(None, description="闭园或未知原因，例如 closed/missing_hours/unknown_hours/replaced")
+    replaced_from: Optional[str] = Field(None, description="若发生替换，记录原活动名称")
+    open_hours_explain: Optional[str] = Field(None, description="营业时间判定说明，如‘计划 09:00-11:00，不在 10:00-17:00 内’")
+    replaced_from_open_hours_raw: Optional[str] = Field(None, description="原活动的营业时间原始字符串（替换后保留以供提示）")
+    replacement_reason: Optional[str] = Field(None, description="替换理由，如‘因闭园自动替换；相似度0.83；通勤约+7分钟’")
+    replacement_commute_delta_min: Optional[float] = Field(None, description="被采纳候选的通勤变化（分钟）")
+    replacement_candidates: Optional[List[ReplacementCandidate]] = Field(None, description="候选清单（前端调试/提示用）")
 
 class DayPlan(BaseModel):
     """单日行程模型"""
