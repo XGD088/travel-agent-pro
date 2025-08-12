@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from datetime import datetime, time
 from pydantic import BaseModel, Field
 from enum import Enum
@@ -26,7 +26,7 @@ class ReplacementCandidate(BaseModel):
 class Activity(BaseModel):
     """单个活动模型"""
     name: str = Field(..., description="活动名称")
-    type: ActivityType = Field(..., description="活动类型")
+    type: str = Field(..., description="活动类型（原始字符串，面向用户展示）")
     location: str = Field(..., description="活动地点")
     start_time: str = Field(..., description="开始时间 (HH:MM)")
     end_time: str = Field(..., description="结束时间 (HH:MM)")
@@ -37,6 +37,8 @@ class Activity(BaseModel):
     # 新增（可选）：与上一个活动之间的距离与驾车时长
     distance_km_from_prev: Optional[float] = Field(None, description="与上一个活动之间的驾车距离（公里）")
     drive_time_min_from_prev: Optional[int] = Field(None, description="与上一个活动之间的驾车时长（分钟）")
+    # 新增：内部归一化后的类型分类（用于策略判断，非必填）
+    category: Optional[str] = Field(None, description="标准化后的活动类别（暂不使用，可留空）")
     # 新增（可选）：营业时间校验
     open_ok: Optional[bool] = Field(None, description="该活动时间段内是否开门")
     open_hours_raw: Optional[str] = Field(None, description="营业时间原始字符串")
@@ -46,7 +48,8 @@ class Activity(BaseModel):
     replaced_from_open_hours_raw: Optional[str] = Field(None, description="原活动的营业时间原始字符串（替换后保留以供提示）")
     replacement_reason: Optional[str] = Field(None, description="替换理由，如‘因闭园自动替换；相似度0.83；通勤约+7分钟’")
     replacement_commute_delta_min: Optional[float] = Field(None, description="被采纳候选的通勤变化（分钟）")
-    replacement_candidates: Optional[List[ReplacementCandidate]] = Field(None, description="候选清单（前端调试/提示用）")
+    # 放宽为任意字段，避免序列化告警；字段至少包含 name 和 summary
+    replacement_candidates: Optional[List[Dict[str, Any]]] = Field(None, description="候选清单（含简短简介 summary）")
 
 class DayPlan(BaseModel):
     """单日行程模型"""
@@ -66,6 +69,7 @@ class TripPlan(BaseModel):
     daily_plans: List[DayPlan] = Field(..., description="每日行程")
     total_estimated_cost: int = Field(..., description="总预估费用（元）")
     general_tips: List[str] = Field(..., description="总体建议")
+    plan_rationale: Optional[str] = Field(None, description="用户可读的规划思路总结")
     
     class Config:
         json_schema_extra = {

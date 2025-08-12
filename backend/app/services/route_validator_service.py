@@ -237,7 +237,7 @@ class RouteValidatorService:
             })
 
         sorted_cands = sorted(scored, key=lambda x: x["score"], reverse=True)
-        # 组装前端可视提示的候选列表（最多 5 个）
+        # 组装前端可视提示的候选列表（最多 5 个），包含简短简介 summary
         shortlist: List[dict] = []
 
         for item in sorted_cands:
@@ -256,11 +256,11 @@ class RouteValidatorService:
             open_ok = self._is_open(act_window, open_windows)
             # 收集候选概览
             if len(shortlist) < 5:
+                summary = self._extract_short_description(cand)
                 shortlist.append({
                     "name": new_name,
-                    "similarity": sim_val,
-                    "score": item["score"],
-                    "commute_delta_min": item["commute_delta"],
+                    "summary": summary,
+                    "commute_delta_min": item.get("commute_delta"),
                     "open_ok": bool(open_ok) if open_ok is not None else None,
                     "open_hours_raw": hours or None,
                 })
@@ -270,7 +270,10 @@ class RouteValidatorService:
                 original_hours = act.open_hours_raw
                 act.name = new_name or act.name
                 act.location = new_addr or act.location
-                act.description = act.description
+                # 使用候选的简介更新描述（截取“详细介绍”部分的前160字）
+                new_desc = self._extract_short_description(cand)
+                if new_desc:
+                    act.description = new_desc
                 act.open_ok = True
                 act.open_hours_raw = hours
                 act.closed_reason = "replaced"
@@ -300,3 +303,21 @@ class RouteValidatorService:
                     act.tips = suffix
                 return True
         return False
+
+    def _extract_short_description(self, cand: dict) -> Optional[str]:
+        try:
+            raw: str = cand.get("description") or ""
+            if not raw:
+                return None
+            # 定位“详细介绍:”之后的文本
+            marker = "详细介绍:"
+            idx = raw.find(marker)
+            text = raw[idx + len(marker):] if idx >= 0 else raw
+            # 去除多余空白
+            text = " ".join(text.split())
+            # 截断到160字
+            if len(text) > 160:
+                text = text[:160].rstrip() + "…"
+            return text
+        except Exception:
+            return None

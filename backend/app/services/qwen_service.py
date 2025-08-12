@@ -61,6 +61,9 @@ class QwenService:
             if isinstance(day.get("estimated_daily_cost"), str) and day["estimated_daily_cost"].isdigit():
                 day["estimated_daily_cost"] = int(day["estimated_daily_cost"])
             for act in day.get("activities", []) or []:
+                # 仅保留原始类型字符串，用于前端展示；不进行标准化
+                raw_type = str(act.get("type", "")).strip()
+                act["type"] = raw_type
                 tips = act.get("tips")
                 if isinstance(tips, list):
                     act["tips"] = "；".join([str(x) for x in tips])
@@ -146,6 +149,27 @@ class QwenService:
                 trip_data = json.loads(response_text)
 
             logger.info("✅ JSON 解析成功")
+            # 注入“人话”的规划思路：让模型补一句不含技术术语的 rationale
+            try:
+                rationale_prompt = (
+                    "用中文简短说明这份行程的规划思路，避免技术术语，更像旅行顾问给用户的说明。"
+                    "要求50-80字，突出这些景点好玩点、风格与节奏、为什么这样排序和取舍。只返回一句话。"
+                )
+                rationale_resp = self._get_client().chat.completions.create(
+                    model="qwen-plus",
+                    messages=[
+                        {"role": "system", "content": "你是旅行顾问"},
+                        {"role": "user", "content": rationale_prompt + "\n\n以下是本次行程JSON：\n" + json.dumps(trip_data, ensure_ascii=False)[:6000]},
+                    ],
+                    temperature=0.6,
+                    max_tokens=120,
+                )
+                plan_rationale = rationale_resp.choices[0].message.content.strip()
+                if plan_rationale:
+                    trip_data["plan_rationale"] = plan_rationale
+            except Exception as _:
+                pass
+
             trip_plan = TripPlan(**self._normalize_trip_data(trip_data))
             # 若请求未显式包含住宿，则剔除住宿活动
             allow = bool(getattr(request, "include_accommodation", False))
@@ -221,15 +245,19 @@ class QwenService:
 
         results = sorted(results, key=score, reverse=True)[:n_results]
 
-        # 过滤城市（如果 metadata 存有 address，可做简单包含过滤）
+        # 过滤城市：仅保留地址或名称包含目的地的结果
         filtered = []
+        dest = request.destination or ""
         for r in results:
             meta = r.get('poi_info') or r.get('metadata') or {}
-            addr = meta.get('address', '')
-            if request.destination and request.destination not in addr:
-                # 允许少量越界，先不过滤，真实项目可加行政区解析
-                pass
-            filtered.append(r)
+            addr = str(meta.get('address') or '')
+            name = str(meta.get('name') or '')
+            if not dest or dest in addr or dest in name:
+                filtered.append(r)
+
+        if not filtered:
+            logger.info("ℹ️ mixed_retrieve_pois: 目的地=%s 越界过滤后无POI，跳过RAG上下文", dest)
+            return ""
 
         # 拼接上下文
         parts = []
@@ -260,6 +288,27 @@ class QwenService:
             start_idx = content.find('{')
             end_idx = content.rfind('}') + 1
             data = json.loads(content[start_idx:end_idx])
+            # 同样为自由文本接口补充“人话”的规划思路
+            try:
+                rationale_prompt = (
+                    "用中文简短说明这份行程的规划思路，避免技术术语，更像旅行顾问给用户的说明。"
+                    "要求50-80字，突出这些景点好玩点、风格与节奏、为什么这样排序和取舍。只返回一句话。"
+                )
+                rationale_resp = self._get_client().chat.completions.create(
+                    model="qwen-plus",
+                    messages=[
+                        {"role": "system", "content": "你是旅行顾问"},
+                        {"role": "user", "content": rationale_prompt + "\n\n以下是本次行程JSON：\n" + json.dumps(data, ensure_ascii=False)[:6000]},
+                    ],
+                    temperature=0.6,
+                    max_tokens=120,
+                )
+                plan_rationale = rationale_resp.choices[0].message.content.strip()
+                if plan_rationale:
+                    data["plan_rationale"] = plan_rationale
+            except Exception:
+                pass
+
             trip = TripPlan(**self._normalize_trip_data(data))
             # 自由文本：若文本包含住宿关键词，保留住宿，否则剔除
             keywords = ["住宿", "酒店", "民宿", "宾馆", "hotel"]
@@ -271,21 +320,27 @@ class QwenService:
             raise ValueError(f"自由文本生成失败: {e}")
 
     def _get_poi_context(self, request: TripRequest) -> str:
-        """获取相关POI上下文信息"""
+        """获取相关POI上下文信息（按目的地过滤）。"""
         try:
-            # 构建查询
-            query = f"北京{request.theme or '旅游'}景点"
-            
-            # 检索相关POI
+            dest = request.destination or "北京"
+            query = f"{dest}{request.theme or '旅游'}景点"
             poi_results = self.poi_service.search_pois_by_query(query, n_results=10)
-            
             if not poi_results:
                 logger.warning("⚠️ 未找到相关POI信息")
                 return ""
-            
-            # 构建POI上下文
+            # 目的地越界过滤
+            filtered = []
+            for r in poi_results:
+                meta = r.get('poi_info') or r.get('metadata') or {}
+                addr = str(meta.get('address') or '')
+                name = str(meta.get('name') or '')
+                if dest in addr or dest in name:
+                    filtered.append(r)
+            if not filtered:
+                logger.info("ℹ️ 目的地=%s 越界过滤后无POI，跳过RAG上下文", dest)
+                return ""
             context_parts = []
-            for result in poi_results:
+            for result in filtered:
                 poi_info = result['poi_info']
                 context_parts.append(f"""
 景点名称: {poi_info['name']}
@@ -298,11 +353,9 @@ class QwenService:
 详细介绍: {result['description']}
 相似度: {result['similarity_score']:.2f}
 ---""")
-            
             context = "\n".join(context_parts)
-            logger.info(f"📚 获取到 {len(poi_results)} 个相关POI信息")
+            logger.info(f"📚 获取到 {len(filtered)} 个相关POI信息（目的地={dest}）")
             return context
-            
         except Exception as e:
             logger.error(f"❌ 获取POI上下文失败: {e}")
             return ""
