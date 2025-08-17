@@ -1,13 +1,12 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from .schemas import TripRequest, TripPlan, FreeTextPlanRequest
+from .schemas import TripRequest, TripPlan
 from .services import QwenService
 from .services.poi_embedding_service import POIEmbeddingService
 from .services import WeatherService
 from .services import AmapService
 from .schemas import WeatherForecast, DailyForecast
-from .schemas import DestinationContext, PlanWithContext, FreeTextWithOptions
 from .graph import get_graph, PlanState
 from typing import Dict
 import os
@@ -182,74 +181,7 @@ async def generate_trip(request: TripRequest):
         logger.error(f"❌ 意外错误: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.post("/resolve-destination")
-async def resolve_destination(payload: Dict[str, str]):
-    """自由文本 → 目的地候选提取 → geocode → regeo → 统一返回目的地上下文。
 
-    输入: { text: string }
-    输出: {
-      raw_input, candidates: string[], selected: string | null,
-      lng: number | null, lat: number | null,
-      city: string | null, province: string | null, country: string | null, adcode: string | null,
-      formatted_address: string | null
-    }
-    """
-    try:
-        # 确保服务初始化，避免热重载后出现 NoneType
-        ensure_initialized()
-        text = (payload.get("text") or "").strip()
-        if not text:
-            raise HTTPException(status_code=400, detail="text is required")
-
-        # 1) LLM 提取目的地候选（失败回退为直接使用全文）
-        try:
-            candidates = qwen_service.extract_destinations(text)
-        except Exception as e:
-            logger.warning("extract_destinations failed, fallback to raw text: %s", e)
-            candidates = [text]
-        # 2) geocode：依次尝试候选，命中即停
-        lng = lat = None
-        chosen = None
-        for cand in candidates or []:
-            coords = amap_service.geocode(cand)
-            if coords:
-                lng, lat = coords
-                chosen = cand
-                break
-        # 若 LLM 无候选，或均失败，尝试直接 geocode 全文
-        if lng is None or lat is None:
-            coords = amap_service.geocode(text)
-            if coords:
-                lng, lat = coords
-                chosen = text
-
-        # 3) 逆地理：补齐城市信息
-        city = province = country = adcode = formatted = None
-        if lng is not None and lat is not None:
-            info = amap_service.regeo(lng, lat)
-            if info:
-                formatted = info.get("formatted_address")
-                city = info.get("city")
-                province = info.get("province")
-                adcode = info.get("adcode")
-        result: Dict[str, object] = {
-            "raw_input": text,
-            "candidates": candidates,
-            "selected": chosen,
-            "lng": lng,
-            "lat": lat,
-            "city": city,
-            "province": province,
-            "country": country,
-            "adcode": adcode,
-            "formatted_address": formatted,
-        }
-        return result
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("resolve-destination failed: %s", e)
-        raise HTTPException(status_code=500, detail="resolve failed")
 
 @app.post("/destination-weather")
 async def destination_weather(payload: Dict[str, str]):
@@ -309,81 +241,10 @@ async def destination_weather(payload: Dict[str, str]):
         logger.error("destination-weather failed: %s", e)
         raise HTTPException(status_code=500, detail="destination-weather failed")
 
-@app.post("/plan-from-text", response_model=TripPlan)
-async def plan_from_text(payload: FreeTextPlanRequest):
-    """自由文本 → 混合检索 → 生成行程"""
-    try:
-        trip = qwen_service.plan_from_free_text(payload.text)
-        return trip
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"❌ 自由文本生成出错: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@app.post("/plan-combined", response_model=PlanWithContext)
-async def plan_combined(payload: FreeTextWithOptions):
-    """自由文本 → 目的地解析 → 天气预报 → 生成行程（单一入口）。
 
-    - 优先解析坐标以确保天气查询稳定
-    - 行程生产失败不影响目的地/天气返回
-    - 天气失败不影响行程
-    """
-    try:
-        ensure_initialized()
-        text = (payload.text or "").strip()
-        host = (payload.host or "").strip()
-        if not text:
-            raise HTTPException(status_code=400, detail="text is required")
 
-        # 目的地解析
-        ctx_raw = await resolve_destination({"text": text})  # type: ignore
-        ctx = DestinationContext(**ctx_raw)  # type: ignore
-
-        # 天气（若有坐标）
-        weather: WeatherForecast | None = None
-        if ctx.lng is not None and ctx.lat is not None:
-            coord = f"{ctx.lng},{ctx.lat}"
-            # 先尝试直接 forecast_3d → 若失败降级到 /weather/forecast 映射
-            forecast_raw = weather_service.forecast_3d(coord, host_override=(host or None))
-            if forecast_raw and forecast_raw.get("daily"):
-                daily_raw = forecast_raw.get("daily", [])[:3]
-                daily = []
-                for d in daily_raw:
-                    daily.append(DailyForecast(
-                        date=d.get("fxDate"),
-                        text_day=d.get("textDay"),
-                        icon_day=d.get("iconDay"),
-                        temp_max_c=int(float(d.get("tempMax"))),
-                        temp_min_c=int(float(d.get("tempMin"))),
-                        precip_mm=float(d.get("precip") or 0.0),
-                        advice=_gen_advice(int(float(d.get("tempMax"))), float(d.get("precip") or 0.0))
-                    ))
-                from datetime import datetime, timezone
-                weather = WeatherForecast(
-                    location=coord,
-                    location_id=None,
-                    days=len(daily),
-                    updated_at=datetime.now(timezone.utc).isoformat(),
-                    daily=daily,
-                )
-            else:
-                weather = await get_weather_forecast(location=coord, days=3, host=host)  # type: ignore
-
-        # 生成行程
-        try:
-            trip = qwen_service.plan_from_free_text(text)
-        except Exception as e:
-            logger.error("plan_from_free_text failed: %s", e)
-            raise HTTPException(status_code=500, detail="planning failed")
-
-        return PlanWithContext(destination_context=ctx, weather=weather, plan=trip)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("/plan-combined failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="plan-combined failed")
 
 @app.get("/trip-schema")
 def get_trip_schema():
@@ -664,17 +525,7 @@ async def weather_debug(location: str = "Beijing", host: str = ""):
         logger.error(f"❌ 天气调试失败: {e}")
         return {"error": str(e)}
 
-@app.post("/validate-trip", response_model=TripPlan)
-async def validate_trip(plan: TripPlan):
-    """对给定行程进行路线距离与时长标注"""
-    try:
-        ensure_initialized()
-        logger.info("🛣️ 开始路线距离校验与标注")
-        annotated = route_validator.annotate_trip(plan)
-        return annotated
-    except Exception as e:
-        logger.error(f"❌ 路线标注失败: {e}")
-        raise HTTPException(status_code=500, detail="路线标注失败")
+
 
 @app.post("/plan", response_model=TripPlan)
 async def plan_with_graph(request: TripRequest):
@@ -691,3 +542,22 @@ async def plan_with_graph(request: TripRequest):
     except Exception as e:
         logger.error("/plan failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="planning failed")
+
+@app.post("/plan-bundle")
+async def plan_bundle(request: TripRequest):
+    """返回组合结果：{ plan, weather }，便于前端一次获取。"""
+    try:
+        ensure_initialized()
+        state = PlanState(request=request)
+        final_state = graph.invoke(state)
+        if not final_state or not final_state.get("plan"):
+            raise HTTPException(status_code=500, detail="planning failed")
+        return {
+            "plan": final_state.get("plan"),
+            "weather": final_state.get("weather")
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("/plan-bundle failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="plan-bundle failed")

@@ -116,11 +116,6 @@ class TripRequest(BaseModel):
     include_accommodation: Optional[bool] = Field(False, description="是否包含住宿/酒店安排（默认不包含）")
 
 
-class FreeTextPlanRequest(BaseModel):
-    """自由文本行程请求模型"""
-    text: str = Field(..., description="用户自由文本需求，例如：‘想周末在北京两天亲子游，预算1000，想去故宫和颐和园。’")
-
-
 # ========================
 # Weather Forecast Schema
 # ========================
@@ -143,34 +138,3 @@ class WeatherForecast(BaseModel):
     days: int = Field(..., description="返回天数")
     updated_at: str = Field(..., description="UTC时间戳 (ISO8601)")
     daily: list[DailyForecast] = Field(..., description="逐日预报")
-
-
-# ========================
-# Destination + Plan Bundle
-# ========================
-
-class DestinationContext(BaseModel):
-    """目的地解析上下文（与 /resolve-destination 返回结构一致）。"""
-    raw_input: str
-    candidates: List[str]
-    selected: Optional[str] = None
-    lng: Optional[float] = None
-    lat: Optional[float] = None
-    city: Optional[str] = None
-    province: Optional[str] = None
-    country: Optional[str] = None
-    adcode: Optional[str] = None
-    formatted_address: Optional[str] = None
-
-
-class PlanWithContext(BaseModel):
-    """包含目的地上下文与天气的完整行程响应。"""
-    destination_context: Optional[DestinationContext] = None
-    weather: Optional[WeatherForecast] = None
-    plan: TripPlan
-
-
-class FreeTextWithOptions(BaseModel):
-    """自由文本 + 可选参数（例如上游和风天气专属域名）。"""
-    text: str = Field(..., description="用户自由文本需求")
-    host: Optional[str] = Field(None, description="和风天气 API 专属域名，可选")
