@@ -5,6 +5,7 @@ from typing import Dict, Optional, Tuple
 import requests
 
 from ..logging_config import get_logger
+from ..config import get_settings
 
 logger = get_logger(__name__)
 
@@ -13,9 +14,11 @@ class AmapService:
     """Amap (Gaode) Web Service client for geocoding and distance matrix."""
 
     def __init__(self, api_key: Optional[str] = None, timeout_seconds: int = 10):
-        self.api_key = api_key or os.getenv("AMAP_API_KEY")
+        settings = get_settings() 
+        self.api_key = api_key or settings.AMAP_API_KEY or os.getenv("AMAP_API_KEY")
         self.timeout_seconds = timeout_seconds
         self.base_geocode_url = "https://restapi.amap.com/v3/geocode/geo"
+        self.base_regeo_url = "https://restapi.amap.com/v3/geocode/regeo"
         self.base_distance_url = "https://restapi.amap.com/v3/distance"
         self.base_place_url = "https://restapi.amap.com/v3/place/text"
         self._place_cache: Dict[str, dict] = {}
@@ -76,6 +79,39 @@ class AmapService:
         except requests.RequestException as exc:
             logger.error(f"地点搜索请求出错: {exc}")
         return None
+
+    def regeo(self, lng: float, lat: float) -> Optional[Dict[str, object]]:
+        """Reverse geocode coordinates to administrative info using Amap.
+        Returns dict with province/city/district/adcode/formatted_address or None.
+        """
+        self._ensure_api_key()
+        params: Dict[str, str] = {
+            "key": self.api_key,
+            "location": f"{lng},{lat}",
+            "output": "json",
+            "extensions": "base",
+        }
+        logger.debug("调用高德逆地理: location=%s,%s", lng, lat)
+        try:
+            resp = requests.get(self.base_regeo_url, params=params, timeout=self.timeout_seconds)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("status") == "1" and data.get("regeocode"):
+                rc = data["regeocode"]
+                addrcomp = rc.get("addressComponent", {})
+                out: Dict[str, object] = {
+                    "formatted_address": rc.get("formatted_address"),
+                    "province": addrcomp.get("province"),
+                    "city": (addrcomp.get("city") if addrcomp.get("city") else addrcomp.get("province")),
+                    "district": addrcomp.get("district"),
+                    "adcode": addrcomp.get("adcode"),
+                }
+                return out
+            logger.warning("逆地理无结果: %s", data)
+            return None
+        except requests.RequestException as exc:
+            logger.error("逆地理请求出错: %s", exc)
+            return None
 
     def get_poi_open_hours(self, keyword: str, city: Optional[str] = None) -> Optional[str]:
         """Try to fetch POI open hours from AMap place search by a keyword (name/address).

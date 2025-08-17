@@ -319,6 +319,42 @@ class QwenService:
             logger.error(f"❌ 自由文本生成失败: {e}")
             raise ValueError(f"自由文本生成失败: {e}")
 
+    def extract_destinations(self, text: str) -> list[str]:
+        """使用LLM从自由文本抽取目的地短语（中文或英文地名、行政区、国家）。
+
+        返回按相关性排序的最多5个候选，全部为去重后的短语。
+        """
+        try:
+            prompt = (
+                "从下面自由文本中抽取最多5个目的地短语，可以是城市/行政区/国家/景区名，按相关性排序，去重；只返回JSON数组，如：[\"北京\", \"首尔\"]。\n\n"
+                f"文本：{text}"
+            )
+            resp = self._get_client().chat.completions.create(
+                model="qwen-plus",
+                messages=[
+                    {"role": "system", "content": "你是信息抽取助手，只返回严格的JSON数组，不含其他文字。"},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.2,
+                max_tokens=200,
+            )
+            content = resp.choices[0].message.content.strip()
+            start = content.find('[')
+            end = content.rfind(']') + 1
+            arr = json.loads(content[start:end])
+            phrases = []
+            seen = set()
+            for item in arr:
+                s = str(item).strip()
+                if not s or s in seen:
+                    continue
+                seen.add(s)
+                phrases.append(s)
+            return phrases[:5]
+        except Exception as e:
+            logger.warning("extract_destinations 失败，返回空列表: %s", e)
+            return []
+
     def _get_poi_context(self, request: TripRequest) -> str:
         """获取相关POI上下文信息（按目的地过滤）。"""
         try:

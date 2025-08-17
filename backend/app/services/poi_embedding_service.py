@@ -3,6 +3,7 @@ import os
 from typing import List, Dict, Any
 from .vector_service import VectorDBService
 from .embedding_service import EmbeddingService
+from ..config import get_settings
 from ..logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -12,8 +13,9 @@ class POIEmbeddingService:
     
     def __init__(self):
         """初始化POI嵌入服务"""
+        settings = get_settings()
         self.vector_service = VectorDBService()
-        self.embedding_service = EmbeddingService()
+        self.embedding_service = EmbeddingService(api_key=settings.DASHSCOPE_API_KEY)
         self.poi_data_path = os.path.join(os.path.dirname(__file__), "..", "data", "beijing_poi.json")
         logger.info("🔧 初始化POI嵌入服务")
     

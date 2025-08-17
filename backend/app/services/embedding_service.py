@@ -9,9 +9,9 @@ logger = get_logger(__name__)
 class EmbeddingService:
     """文本嵌入服务类 - 使用Qwen Embedding API"""
     
-    def __init__(self):
-        """初始化Qwen Embedding服务"""
-        self.api_key = os.getenv("DASHSCOPE_API_KEY")
+    def __init__(self, api_key: str | None = None):
+        """初始化Qwen Embedding服务（不缓存进程环境，允许注入配置）。"""
+        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY")
         self.base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
         self.model = None
         logger.info("🔧 初始化Qwen Embedding服务")

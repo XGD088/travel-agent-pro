@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import WeatherCard from '@/components/WeatherCard'
 
 interface TripPlan {
   destination: string
@@ -77,6 +78,8 @@ export default function Home() {
     () => new Date().toISOString().slice(0, 10)
   )
   const [freeText, setFreeText] = useState<string>("")
+  const [destCtx, setDestCtx] = useState<any>(null)
+  const [weatherKey, setWeatherKey] = useState<{ location: string, host?: string } | null>(null)
 
   const generateTrip = async () => {
     setIsLoading(true)
@@ -86,37 +89,27 @@ export default function Home() {
         ? `${freeText}\n开始日期: ${startDate}`
         : `在北京${startDate}开始的2天旅行计划`
 
-      const response = await fetch('http://localhost:8000/plan-from-text', {
+      // 使用新的 LangGraph 编排端点
+      const response = await fetch('http://localhost:8000/plan', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ text: composed })
+        body: JSON.stringify({ 
+          destination: "北京", 
+          duration_days: 2, 
+          theme: "亲子",
+          start_date: startDate,
+          interests: ["公园", "文化"]
+        })
       })
       
       if (response.ok) {
         const data = await response.json()
-        // Day 3: 调用后端校验接口为行程打上距离/时长
-        try {
-          const validatedResp = await fetch('http://localhost:8000/validate-trip', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-          })
-          if (validatedResp.ok) {
-            const validated = await validatedResp.json()
-            setTripPlan(validated)
-          } else {
-            // 兜底：如果校验失败，仍展示原始计划
-            setTripPlan(data)
-          }
-        } catch {
-          setTripPlan(data)
-        }
+        // LangGraph 端点直接返回 TripPlan，无需额外校验
+        setTripPlan(data)
       } else {
-        console.error('Failed to generate trip plan')
-        // 显示错误信息
-        const errorData = await response.json()
+        const errorData = await response.json().catch(() => ({}))
         alert(`生成旅行计划失败: ${errorData.detail || '未知错误'}`)
       }
     } catch (error) {
@@ -151,8 +144,36 @@ export default function Home() {
     }
   }
 
+  const resolveDestinationAndWeather = async () => {
+    try {
+      const resp = await fetch('http://localhost:8000/resolve-destination', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: freeText || '北京' })
+      })
+      if (!resp.ok) throw new Error('resolve failed')
+      const ctx = await resp.json()
+      setDestCtx(ctx)
+      if (ctx?.lng != null && ctx?.lat != null) {
+        setWeatherKey({ location: `${ctx.lng},${ctx.lat}`, host: 'ka4d92udc6.re.qweatherapi.com' })
+      } else {
+        alert('未能解析出坐标，请尝试更明确的目的地描述')
+      }
+    } catch (e) {
+      console.error(e)
+      alert('目的地解析失败')
+    }
+  }
+
   return (
     <main className="container mx-auto px-4 py-8">
+      {weatherKey ? (
+        <WeatherCard location={weatherKey.location} host={weatherKey.host} />
+      ) : (
+        <div className="max-w-4xl mx-auto mb-4 rounded border bg-white p-3 text-sm text-gray-600">
+          提示：填写下方自由文本后点“解析目的地并取天气”，会使用坐标查询天气，更稳健。
+        </div>
+      )}
       <div className="text-center mb-8">
         <h1 className="text-4xl font-bold text-gray-900 mb-4">
           🏃🏻 Travel Agent Pro
@@ -248,6 +269,12 @@ export default function Home() {
               className="bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isLoading ? '生成中...' : '🎯 生成旅行计划（自由文本）'}
+            </button>
+            <button
+              onClick={resolveDestinationAndWeather}
+              className="bg-blue-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-600"
+            >
+              解析目的地并取天气
             </button>
           </div>
         </div>

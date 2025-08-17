@@ -119,3 +119,58 @@ class TripRequest(BaseModel):
 class FreeTextPlanRequest(BaseModel):
     """自由文本行程请求模型"""
     text: str = Field(..., description="用户自由文本需求，例如：‘想周末在北京两天亲子游，预算1000，想去故宫和颐和园。’")
+
+
+# ========================
+# Weather Forecast Schema
+# ========================
+
+class DailyForecast(BaseModel):
+    """单日天气预报"""
+    date: str = Field(..., description="日期 (YYYY-MM-DD)")
+    text_day: str = Field(..., description="白天天气现象")
+    icon_day: str = Field(..., description="白天图标代码")
+    temp_max_c: int = Field(..., description="最高气温(℃)")
+    temp_min_c: int = Field(..., description="最低气温(℃)")
+    precip_mm: float = Field(0.0, description="降水量(mm)")
+    advice: str = Field("", description="穿衣/出行建议")
+
+
+class WeatherForecast(BaseModel):
+    """3日天气预报响应"""
+    location: str = Field(..., description="请求中的位置标识（可为LocationID或名称）")
+    location_id: str | None = Field(None, description="解析得到的LocationID")
+    days: int = Field(..., description="返回天数")
+    updated_at: str = Field(..., description="UTC时间戳 (ISO8601)")
+    daily: list[DailyForecast] = Field(..., description="逐日预报")
+
+
+# ========================
+# Destination + Plan Bundle
+# ========================
+
+class DestinationContext(BaseModel):
+    """目的地解析上下文（与 /resolve-destination 返回结构一致）。"""
+    raw_input: str
+    candidates: List[str]
+    selected: Optional[str] = None
+    lng: Optional[float] = None
+    lat: Optional[float] = None
+    city: Optional[str] = None
+    province: Optional[str] = None
+    country: Optional[str] = None
+    adcode: Optional[str] = None
+    formatted_address: Optional[str] = None
+
+
+class PlanWithContext(BaseModel):
+    """包含目的地上下文与天气的完整行程响应。"""
+    destination_context: Optional[DestinationContext] = None
+    weather: Optional[WeatherForecast] = None
+    plan: TripPlan
+
+
+class FreeTextWithOptions(BaseModel):
+    """自由文本 + 可选参数（例如上游和风天气专属域名）。"""
+    text: str = Field(..., description="用户自由文本需求")
+    host: Optional[str] = Field(None, description="和风天气 API 专属域名，可选")
