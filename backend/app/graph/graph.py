@@ -1,6 +1,7 @@
 from langgraph.graph import StateGraph, END
 from .state import PlanState
 from .nodes import planner_node, retriever_node, scheduler_node, validators_node, repair_node, finalize_node, weather_node
+import os
 
 
 _compiled_graph = None
@@ -10,6 +11,12 @@ def get_graph():
     global _compiled_graph
     if _compiled_graph is not None:
         return _compiled_graph
+
+    # 启用 LangSmith 追踪
+    if os.getenv("LANGCHAIN_TRACING_V2") == "true":
+        print("🚀 LangSmith 追踪已启用")
+    else:
+        print("⚠️ LangSmith 追踪未启用，请检查环境变量")
 
     g = StateGraph(PlanState)
     g.add_node("planner", planner_node)
