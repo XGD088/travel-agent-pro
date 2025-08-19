@@ -1,21 +1,22 @@
 flowchart LR
-  U[User 输入需求] --> P[Planner-LLM 只产出候选 POI id/偏好]
-  P --> C[候选 POI 子集 -CATALOG / RAG]
-  C --> S[Scheduler 贪心/OR-Tools 排程]
-  S --> V[Validator 校验器]
+  U["User 输入需求"] --> P["Planner-LLM：只产出候选 POI id/偏好"]
+  P --> C["候选 POI 子集（CATALOG / RAG）"]
+  C --> S["Scheduler：贪心 / OR-Tools 排程"]
+  S --> V["Validator 校验器"]
 
   subgraph Amap APIs
-    POI[POI 搜索/ID详情\n v3 place/text, place/detail]
-    Rte[路线距离/耗时\ nv3 direction.* ]
-    Wth[天气实况/预报\ nv3 weatherInfo]
+    POI["POI 搜索 / ID 详情<br/>v3 place/text, place/detail"]
+    Rte["路线距离 / 耗时<br/>v3 direction.*"]
   end
-
+  subgraph Qweather APIs
+    Wth["天气实况 / 预报<br/>v3 weatherInfo"]
+  end
   V --> POI
   V --> Rte
   V --> Wth
 
-  V -- ok --> OK[可执行行程 JSON]
-  V -- fail --> R[Repair 修复器\n同簇备选/重排/降级自由活动]
+  V -- ok --> OK["✅ 可执行行程 JSON"]
+  V -- fail --> R["Repair 修复器<br/>同簇备选 / 重排 / 降级自由活动"]
   R --> V
 
-  OK --> D[DeepLink 跳转 OTA / 导出 ICS]
+  OK --> D["DeepLink 跳转 OTA / 导出 ICS"]
