@@ -1,339 +1,409 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { Edit3, Map, Download, Share2, X, ChevronDown, RefreshCw, Rocket } from 'lucide-react'
 
-type Daily = {
-  date: string
-  text_day: string
-  icon_day: string
-  temp_max_c: number
-  temp_min_c: number
-  precip_mm: number
-  advice: string
-}
-
-type WeatherForecast = {
-  location: string
-  location_id?: string | null
-  days: number
-  updated_at: string
-  daily: Daily[]
-}
-
-interface TripPlan {
-  destination: string
-  duration_days: number
-  theme: string
-  start_date: string
-  end_date: string
-  daily_plans: Array<{
-    date: string
-    day_title: string
-    activities: Array<{
-      name: string
-      type: string
-      category?: string
-      location: string
-      start_time: string
-      end_time: string
-      duration_minutes: number
-      description: string
-      estimated_cost: number | null
-      tips: string | null
-      // Day 3 fields (optional)
-      distance_km_from_prev?: number | null
-      drive_time_min_from_prev?: number | null
-      // Day 4 fields (optional)
-      open_ok?: boolean | null
-      open_hours_raw?: string | null
-      closed_reason?: string | null
-      replaced_from?: string | null
-      open_hours_explain?: string | null
-      replaced_from_open_hours_raw?: string | null
-      replacement_reason?: string | null
-      replacement_commute_delta_min?: number | null
-      replacement_candidates?: Array<{
-        name: string
-        summary?: string | null
-        commute_delta_min?: number | null
-        open_hours_raw?: string | null
-        open_ok?: boolean | null
-      }> | null
-    }>
-    daily_summary: string
-    estimated_daily_cost: number
-  }>
-  total_estimated_cost: number
-  general_tips: string[]
-  // 追加：规划思路（来自后端简单生成或前端拼装）
-  plan_rationale?: string
-}
-
-// 将技术性理由转为用户可读文案
-function readableReason(activity: any): string {
-  if (activity.closed_reason === 'replaced') {
-    const commute = activity.replacement_commute_delta_min
-    const sim = activity.replacement_candidates?.[0]?.similarity
-    const parts: string[] = []
-    parts.push('原计划该时段不营业，已为你换成相似体验的备选')
-    if (sim != null) parts.push(`相似度约 ${Number(sim).toFixed(2)}`)
-    if (commute != null) parts.push(`通勤变化约 ${Math.round(commute)} 分钟`)
-    return parts.join('；')
+declare global {
+  interface Window {
+    flatpickr: any;
   }
-  if (activity.open_ok === false) {
-    return '该时段可能不营业或需到店确认，你可以考虑调整时间或更换景点'
-  }
-  return '基于营业时间与路程做了适配'
+}
+
+interface StyleOption {
+  value: string
+  icon: string
+  text: string
+  description: string
+  selected?: boolean
+}
+
+interface Tag {
+  id: number
+  text: string
+  type: 'system' | 'custom'
+}
+
+interface Plan {
+  city: string
 }
 
 export default function Home() {
-  const [isLoading, setIsLoading] = useState(false)
-  const [tripPlan, setTripPlan] = useState<TripPlan | null>(null)
-  const [startDate, setStartDate] = useState<string>(
-    () => new Date().toISOString().slice(0, 10)
-  )
-  const [freeText, setFreeText] = useState<string>("")
-  const [weather, setWeather] = useState<WeatherForecast | null>(null)
+  // App State - 核心状态管理
+  const [appState, setAppState] = useState<{ plan: Plan | null }>({ plan: null })
+  
+  // Modal and UI state
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isStyleDropdownOpen, setIsStyleDropdownOpen] = useState(false)
+  
+  // Form state
+  const [styleOptions, setStyleOptions] = useState<StyleOption[]>([
+    { value: 'relaxed', icon: '🧘', text: '轻松', description: '每日2-3个活动', selected: true },
+    { value: 'packed', icon: '🏃', text: '紧凑', description: '每日4-5个活动' },
+    { value: 'business', icon: '👔', text: '商务', description: '高效、含会议时间' }
+  ])
+  const [tags, setTags] = useState<Tag[]>([
+    { id: 1, text: '亲子', type: 'system' },
+    { id: 2, text: '避免博物馆', type: 'custom' }
+  ])
+  const [tagInput, setTagInput] = useState('')
+  const [specialRequirement, setSpecialRequirement] = useState('')
 
-  const generateTrip = async () => {
-    setIsLoading(true)
-    try {
-      // 使用新的组合端点，返回 plan + weather
-      const response = await fetch('http://localhost:8000/plan-bundle', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ 
-          destination: "北京", 
-          duration_days: 2, 
-          theme: "亲子",
-          start_date: startDate,
-          interests: ["公园", "文化"]
-        })
-      })
-      
-      if (response.ok) {
-        const data = await response.json()
-        setTripPlan(data.plan)
-        setWeather(data.weather || null)
-      } else {
-        const errorData = await response.json().catch(() => ({}))
-        alert(`生成旅行计划失败: ${errorData.detail || '未知错误'}`)
+  const selectedStyle = styleOptions.find(opt => opt.selected) || styleOptions[0]
+  const hasPlan = !!appState.plan
+
+  useEffect(() => {
+    // Load external scripts and styles (暗色主题现在是默认的)
+    const loadExternalResources = () => {
+      // Load Flatpickr CSS
+      if (!document.querySelector('link[href*="flatpickr"]')) {
+        const flatpickrCSS = document.createElement('link')
+        flatpickrCSS.rel = 'stylesheet'
+        flatpickrCSS.href = 'https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css'
+        document.head.appendChild(flatpickrCSS)
       }
-    } catch (error) {
-      console.error('Error generating trip plan:', error)
-      alert('生成旅行计划时发生错误，请检查网络连接')
-    } finally {
-      setIsLoading(false)
+
+      // 主题CSS已经在layout.tsx中预加载了
+
+      // Load Flatpickr JS
+      if (!window.flatpickr) {
+        const flatpickrScript = document.createElement('script')
+        flatpickrScript.src = 'https://cdn.jsdelivr.net/npm/flatpickr'
+        flatpickrScript.onload = () => {
+          // Load Chinese locale
+          const localeScript = document.createElement('script')
+          localeScript.src = 'https://npmcdn.com/flatpickr/dist/l10n/zh.js'
+          localeScript.onload = initializeFlatpickr
+          document.head.appendChild(localeScript)
+        }
+        document.head.appendChild(flatpickrScript)
+      } else {
+        initializeFlatpickr()
+      }
+    }
+
+    const initializeFlatpickr = () => {
+      if (isModalOpen && window.flatpickr) {
+        setTimeout(() => {
+          const dateInput = document.getElementById('date-picker')
+          if (dateInput && !dateInput.classList.contains('flatpickr-input')) {
+            // 采用HTML模板中的flatpickr配置
+            if (window.flatpickr.l10ns && window.flatpickr.l10ns.zh) {
+              window.flatpickr.localize(window.flatpickr.l10ns.zh)
+            }
+            window.flatpickr("#date-picker", {
+              mode: "range",
+              dateFormat: "Y-m-d",
+              locale: "zh",
+              monthSelectorType: "dropdown",
+              showMonths: 2,
+              disableMobile: true,
+              appendTo: document.body,
+              onReady: (selectedDates: any, dateStr: string, instance: any) => {
+                instance.calendarContainer.classList.add('dark')
+              }
+            })
+          }
+        }, 100)
+      }
+    }
+
+    loadExternalResources()
+  }, [isModalOpen])
+
+  // Event handlers
+  const openModal = () => {
+    setIsModalOpen(true)
+  }
+
+  const closeModal = () => {
+    setIsModalOpen(false)
+  }
+
+  const handleStyleSelect = (selectedValue: string) => {
+    setStyleOptions(prev => 
+      prev.map(opt => ({ ...opt, selected: opt.value === selectedValue }))
+    )
+    setIsStyleDropdownOpen(false)
+  }
+
+  // 处理点击外部关闭下拉菜单 (类似HTML模板中的逻辑)
+  useEffect(() => {
+    const handleDocumentClick = () => {
+      setIsStyleDropdownOpen(false)
+    }
+
+    if (isStyleDropdownOpen) {
+      document.addEventListener('click', handleDocumentClick)
+      return () => document.removeEventListener('click', handleDocumentClick)
+    }
+  }, [isStyleDropdownOpen])
+
+  const handleTagInputKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && tagInput.trim()) {
+      e.preventDefault()
+      const newTag: Tag = {
+        id: Date.now(),
+        text: tagInput.trim(),
+        type: 'custom'
+      }
+      setTags([...tags, newTag])
+      setTagInput('')
     }
   }
 
-  return (
-    <main className="container mx-auto px-4 py-8">
-      {weather ? (
-        <div className="max-w-4xl mx-auto mb-6">
-          <div className="bg-white border rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="text-4xl">🌤️</div>
-                <div>
-                  <div className="text-lg font-semibold">{weather.daily[0].text_day}</div>
-                  <div className="text-gray-600 text-sm">{weather.daily[0].temp_min_c}℃ ~ {weather.daily[0].temp_max_c}℃ · 降水 {weather.daily[0].precip_mm}mm</div>
-                  <div className="text-gray-800 text-sm mt-1">{weather.daily[0].advice}</div>
-                </div>
-              </div>
-              <div className="text-right text-xs text-gray-500">
-                更新于 {new Date(weather.updated_at).toLocaleString()}
-              </div>
-            </div>
-            {weather.daily.length > 1 && (
-              <div className="grid grid-cols-3 gap-3 mt-4 text-sm">
-                {weather.daily.slice(1).map((d, i) => (
-                  <div key={i} className="bg-gray-50 rounded p-3">
-                    <div className="font-medium">{d.date}</div>
-                    <div className="text-gray-700">{d.text_day}</div>
-                    <div className="text-gray-600">{d.temp_min_c}℃ ~ {d.temp_max_c}℃</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+  const removeTag = (tagId: number) => {
+    setTags(tags.filter(tag => tag.id !== tagId))
+  }
+
+  const handleSubmit = () => {
+    // Mock plan data - 后续替换为真实API调用
+    setAppState({ plan: { city: '北京' } })
+    closeModal()
+  }
+
+  // 根据状态渲染侧边栏详情
+  const renderPlanDetails = () => {
+    if (!hasPlan) {
+      return <p className="text-sm text-muted-foreground">当前没有行程，点击下方按钮开始您的第一次规划。</p>
+    }
+    
+    return (
+      <div>
+        <label className="text-sm font-medium text-muted-foreground">目的地</label>
+        <p className="text-base font-semibold text-foreground mt-1">{appState.plan?.city}</p>
+      </div>
+    )
+  }
+
+  // 根据状态渲染主内容
+  const renderMainContent = () => {
+    if (!hasPlan) {
+      return (
+        <div className="text-center py-24 flex flex-col items-center">
+          <Map className="w-16 h-16 text-muted-foreground" />
+          <h2 className="text-2xl font-semibold mt-4">无行程</h2>
+          <p className="mt-2 text-muted-foreground">请点击左侧的"新建行程"按钮开始。</p>
         </div>
-      ) : (
-        <div className="max-w-4xl mx-auto mb-4 rounded border bg-white p-3 text-sm text-gray-600">
-          提示：填写下方信息后点击"生成旅行计划"，将使用 LangGraph 编排生成完整的旅行计划。
-        </div>
-      )}
-      <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 mb-4">
-          🏃🏻 Travel Agent Pro
-        </h1>
-        <p className="text-xl text-gray-600 mb-8">
-          AI-Powered Weekend Trip Planner (Beijing ver.)
-        </p>
-        
-        {/* LangGraph 功能展示 */}
-        <div className="bg-green-50 border border-green-200 rounded-lg p-6 max-w-4xl mx-auto mb-8">
-          <h2 className="text-2xl font-semibold text-green-900 mb-4">
-            🚀 LangGraph 编排完成 ✅
-          </h2>
-          <p className="text-green-700 mb-4">
-            使用 LangGraph 统一编排，实现 planner → retriever → scheduler → validators 的完整流程！
-          </p>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-            <div className="bg-white p-4 rounded-lg border">
-              <h3 className="font-semibold text-gray-800 mb-2">🔍 RAG功能特性</h3>
-              <ul className="text-sm text-gray-600 space-y-1">
-                <li>• 20条北京POI数据向量化存储</li>
-                <li>• Qwen Embedding API远程调用</li>
-                <li>• 智能相似度检索</li>
-                <li>• 详细POI介绍注入</li>
-              </ul>
-            </div>
-            
-            <div className="bg-white p-4 rounded-lg border">
-              <h3 className="font-semibold text-gray-800 mb-2">🚀 LangGraph 编排</h3>
-              <div className="text-sm text-gray-600 space-y-2">
-                <p>• 统一配置中心</p>
-                <p>• 图编排流程</p>
-                <p>• 状态管理</p>
-                <p>• 错误恢复</p>
-              </div>
-            </div>
+      )
+    }
+
+    return (
+      <>
+        <header className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">您的{appState.plan?.city}之旅</h1>
+            <p className="text-muted-foreground mt-1">已为您智能优化</p>
           </div>
-          
-          <div className="flex flex-col md:flex-row items-start md:items-end gap-3">
-            <div className="text-left w-full md:w-auto md:min-w-[260px]">
-              <label className="block text-sm text-gray-700 mb-1">开始日期</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="border rounded px-3 py-2 text-sm w-full"
-              />
-            </div>
-            <div className="flex-1 w-full">
-              <label className="block text-sm text-gray-700 mb-1">自由文本需求</label>
-              <textarea
-                value={freeText}
-                onChange={(e) => setFreeText(e.target.value)}
-                placeholder="例如：想周末在北京两天亲子游，预算1000，想去故宫和颐和园。"
-                rows={3}
-                className="w-full border rounded px-3 py-2 text-sm"
-              />
-            </div>
-            <button 
-              onClick={generateTrip}
-              disabled={isLoading}
-              className="bg-green-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isLoading ? '生成中...' : '🎯 生成旅行计划（LangGraph）'}
+          <div className="flex items-center gap-3">
+            <button className="btn-secondary border border-border flex items-center gap-2 py-2 px-4 rounded-lg font-semibold shadow-sm">
+              <Download className="w-4 h-4" />
+              <span>导出</span>
+            </button>
+            <button className="btn-secondary border border-border flex items-center gap-2 py-2 px-4 rounded-lg font-semibold shadow-sm">
+              <Share2 className="w-4 h-4" />
+              <span>分享</span>
             </button>
           </div>
+        </header>
+        <div className="card p-5">
+          <p>行程 for {appState.plan?.city} will be here.</p>
         </div>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="flex min-h-screen">
+        {/* Sidebar - 采用HTML模板的结构 */}
+        <aside className="w-1/3 lg:w-1/4 bg-[var(--sidebar)] p-8 border-r border-[var(--sidebar-border)] flex flex-col gap-8">
+          <div>
+            <h1 className="text-2xl font-bold text-[var(--foreground)]">Travel Agent Pro</h1>
+            <p className="text-sm text-[var(--muted-foreground)] mt-1">您的智能行程规划助手</p>
+          </div>
+          
+          <div className="space-y-6">
+            <h2 className="text-lg font-semibold text-[var(--foreground)]">您的计划</h2>
+            <div id="plan-details-container">
+              {renderPlanDetails()}
+            </div>
+          </div>
+          
+          <div className="mt-auto space-y-3">
+            <button 
+              onClick={openModal}
+              className="w-full btn-primary flex items-center justify-center gap-2 text-lg py-3"
+            >
+              {hasPlan ? (
+                <Edit3 className="w-5 h-5" />
+              ) : (
+                <Rocket className="w-5 h-5" />
+              )}
+              <span>{hasPlan ? "优化行程" : "新建行程"}</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* Main Content - 采用HTML模板的结构 */}
+        <main className="w-2/3 lg:w-3/4 p-8 lg:p-12">
+          <div id="main-content-container">
+            {renderMainContent()}
+          </div>
+        </main>
       </div>
 
-      {/* 旅行计划展示 */}
-      {tripPlan && (
-        <div className="max-w-4xl mx-auto">
-          <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">
-              📋 {tripPlan.destination} {tripPlan.theme}
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 text-sm">
-              <div className="bg-gray-50 p-3 rounded">
-                <span className="font-semibold">行程天数:</span> {tripPlan.duration_days}天
-              </div>
-              <div className="bg-gray-50 p-3 rounded">
-                <span className="font-semibold">开始日期:</span> {tripPlan.start_date}
-              </div>
-              <div className="bg-gray-50 p-3 rounded">
-                <span className="font-semibold">总费用:</span> ¥{tripPlan.total_estimated_cost}
-              </div>
+      {/* Modal - 采用HTML模板的结构和样式 */}
+      {isModalOpen && (
+        <div 
+          className={`modal-overlay ${isModalOpen ? 'active' : ''}`}
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
+        >
+          <div className="modal-content">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="text-2xl font-bold">
+                {hasPlan ? "优化您的北京之旅" : "创建您的北京之旅"}
+              </h2>
+              <button 
+                onClick={closeModal}
+                className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+              >
+                <X className="w-6 h-6" />
+              </button>
             </div>
-
-            {/* 每日行程 */}
+            
+            <p className="text-[var(--muted-foreground)] mb-6">
+              调整下方参数，AI 将为您重新生成更合心意的行程。
+            </p>
+            
             <div className="space-y-6">
-              {tripPlan.daily_plans.map((day, dayIndex) => (
-                <div key={dayIndex} className="border border-gray-200 rounded-lg p-4">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                    📅 {day.date} - {day.day_title}
-                  </h3>
-                  
-                  <div className="space-y-4">
-                    {day.activities.map((activity, activityIndex) => (
-                      <div key={activityIndex} className="bg-blue-50 p-4 rounded-lg">
-                        <div className="flex justify-between items-start mb-2">
-                          <h4 className="font-semibold text-gray-800">{activity.name}</h4>
-                          <span className="text-sm text-gray-600">
-                            {activity.start_time} - {activity.end_time}
-                          </span>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                          <div>
-                            <p><span className="font-medium">类型:</span> {activity.type}</p>
-                            <p><span className="font-medium">地点:</span> {activity.location}</p>
-                            <p><span className="font-medium">时长:</span> {activity.duration_minutes}分钟</p>
-                            <p><span className="font-medium">费用:</span> ¥{activity.estimated_cost || 0}</p>
-                          </div>
-                          <div>
-                            <p><span className="font-medium">描述:</span> {activity.description}</p>
-                            {activity.tips && (
-                              <p><span className="font-medium">提示:</span> {activity.tips}</p>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Day 3: 距离信息 */}
-                        {activity.distance_km_from_prev != null && (
-                          <div className="mt-2 p-2 bg-yellow-50 rounded text-sm">
-                            <span className="font-medium">距离上一站:</span> {activity.distance_km_from_prev}km
-                            {activity.drive_time_min_from_prev != null && (
-                              <span className="ml-4">
-                                <span className="font-medium">车程:</span> {activity.drive_time_min_from_prev}分钟
-                              </span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Day 4: 营业时间信息 */}
-                        {activity.open_ok === false && (
-                          <div className="mt-2 p-2 bg-red-50 rounded text-sm">
-                            <span className="font-medium">⚠️ 营业时间:</span> {readableReason(activity)}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  
-                  <div className="mt-4 p-3 bg-gray-50 rounded">
-                    <p className="font-medium text-gray-800">当日总结:</p>
-                    <p className="text-gray-600">{day.daily_summary}</p>
-                    <p className="text-sm text-gray-500 mt-2">
-                      当日预估费用: ¥{day.estimated_daily_cost}
-                    </p>
-                  </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Date Picker */}
+                <div>
+                  <label className="block text-sm font-medium text-[var(--muted-foreground)] mb-1">
+                    日期范围
+                  </label>
+                  <input 
+                    id="date-picker" 
+                    type="text" 
+                    placeholder="选择您的旅行日期" 
+                    className="w-full p-2 bg-[var(--input)] border border-[var(--border)] rounded-md cursor-pointer"
+                  />
                 </div>
-              ))}
-            </div>
-
-            {/* 总体提示 */}
-            {tripPlan.general_tips && tripPlan.general_tips.length > 0 && (
-              <div className="mt-6 p-4 bg-yellow-50 rounded-lg">
-                <h3 className="font-semibold text-gray-800 mb-2">💡 旅行提示</h3>
-                <ul className="list-disc list-inside space-y-1 text-sm text-gray-700">
-                  {tripPlan.general_tips.map((tip, index) => (
-                    <li key={index}>{tip}</li>
-                  ))}
-                </ul>
+                
+                {/* Style Dropdown */}
+                <div className="custom-dropdown">
+                  <label className="block text-sm font-medium text-[var(--muted-foreground)] mb-1">
+                    旅行风格
+                  </label>
+                  <div 
+                    className="dropdown-button"
+                    aria-expanded={isStyleDropdownOpen}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setIsStyleDropdownOpen(!isStyleDropdownOpen)
+                    }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>{selectedStyle.icon}</span>
+                      <span>{selectedStyle.text}</span>
+                    </div>
+                    <ChevronDown className={`w-5 h-5 chevron transition-transform ${isStyleDropdownOpen ? 'rotate-180' : ''}`} />
+                  </div>
+                  
+                  {isStyleDropdownOpen && (
+                    <div className={`dropdown-options ${isStyleDropdownOpen ? 'open' : ''}`}>
+                      {styleOptions.map((option) => (
+                        <div
+                          key={option.value}
+                          className={`dropdown-option ${option.selected ? 'selected' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleStyleSelect(option.value)
+                          }}
+                        >
+                          <span className="text-lg">{option.icon}</span>
+                          <div>
+                            <p>{option.text}</p>
+                            <p className="text-xs text-[var(--muted-foreground)]">{option.description}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
-            )}
+              
+              {/* Special Requirements */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--muted-foreground)] mb-1">
+                  特殊要求 (选填)
+                </label>
+                <input 
+                  type="text" 
+                  value={specialRequirement}
+                  onChange={(e) => setSpecialRequirement(e.target.value)}
+                  placeholder="例如：希望能去一家评价好的烤鸭店..." 
+                  className="w-full p-2 bg-[var(--input)] border border-[var(--border)] rounded-md"
+                />
+              </div>
+              
+              {/* Tags */}
+              <div>
+                <label className="block text-sm font-medium text-[var(--muted-foreground)] mb-2">
+                  智能必去清单
+                </label>
+                <div className="tag-input-container">
+                  {tags.map((tag) => (
+                    <span
+                      key={tag.id}
+                      className={`tag ${tag.type}`}
+                    >
+                      {tag.text}
+                      <button 
+                        onClick={() => removeTag(tag.id)}
+                        className="tag-remove"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    type="text"
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    onKeyPress={handleTagInputKeyPress}
+                    placeholder="输入想去的地方后按回车..."
+                    className="tag-input"
+                  />
+                </div>
+                <p className="mt-2 text-xs text-[var(--muted-foreground)]">
+                  💡 AI将优先满足清单中的安排。
+                </p>
+              </div>
+            </div>
+            
+            <div className="mt-8 flex justify-end gap-4">
+              <button 
+                onClick={closeModal}
+                className="py-2 px-5 bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-md font-semibold hover:bg-[var(--accent)]"
+              >
+                取消
+              </button>
+              <button 
+                onClick={handleSubmit}
+                className="py-2 px-5 btn-primary flex items-center gap-2"
+              >
+                {hasPlan ? (
+                  <RefreshCw className="w-4 h-4" />
+                ) : (
+                  <Rocket className="w-4 h-4" />
+                )}
+                <span>{hasPlan ? "更新行程" : "生成行程"}</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
-    </main>
+    </>
   )
 }
