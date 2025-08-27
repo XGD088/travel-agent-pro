@@ -1,7 +1,8 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Edit3, Map, Download, Share2, X, ChevronDown, RefreshCw, Rocket } from 'lucide-react'
+import { Edit3, Map, Download, Share2, X, ChevronDown, RefreshCw, Rocket, Loader2, AlertCircle } from 'lucide-react'
+import { api, TripRequest, TripPlan, formatAPIError, checkBackendHealth } from '../lib/api'
 
 declare global {
   interface Window {
@@ -23,13 +24,12 @@ interface Tag {
   type: 'system' | 'custom'
 }
 
-interface Plan {
-  city: string
-}
-
 export default function Home() {
   // App State - 核心状态管理
-  const [appState, setAppState] = useState<{ plan: Plan | null }>({ plan: null })
+  const [tripPlan, setTripPlan] = useState<TripPlan | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [backendHealthy, setBackendHealthy] = useState<boolean | null>(null)
   
   // Modal and UI state
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -49,7 +49,12 @@ export default function Home() {
   const [specialRequirement, setSpecialRequirement] = useState('')
 
   const selectedStyle = styleOptions.find(opt => opt.selected) || styleOptions[0]
-  const hasPlan = !!appState.plan
+  const hasPlan = !!tripPlan
+
+  // 检查后端服务状态
+  useEffect(() => {
+    checkBackendHealth().then(setBackendHealthy);
+  }, []);
 
   useEffect(() => {
     // Load external scripts and styles (暗色主题现在是默认的)
@@ -155,10 +160,58 @@ export default function Home() {
     setTags(tags.filter(tag => tag.id !== tagId))
   }
 
-  const handleSubmit = () => {
-    // Mock plan data - 后续替换为真实API调用
-    setAppState({ plan: { city: '北京' } })
-    closeModal()
+  const handleSubmit = async () => {
+    setError(null);
+    setIsLoading(true);
+    
+    try {
+      // 获取日期选择器的值
+      const dateInput = document.getElementById('date-picker') as HTMLInputElement;
+      const dateRange = dateInput?.value;
+      
+      // 解析日期范围 (格式: "2025-09-06 to 2025-09-07")
+      let startDate = '';
+      let durationDays = 2; // 默认值
+      
+      if (dateRange && dateRange.includes(' to ')) {
+        const [start, end] = dateRange.split(' to ');
+        startDate = start.trim();
+        const startDateObj = new Date(start);
+        const endDateObj = new Date(end);
+        durationDays = Math.ceil((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      }
+      
+      // 构建请求
+      const request: TripRequest = {
+        destination: '北京', // 暂时固定，后续可以从表单获取
+        duration_days: durationDays,
+        theme: selectedStyle.text, // 使用选择的旅行风格
+        interests: tags.map(tag => tag.text), // 使用标签作为兴趣
+        start_date: startDate || undefined,
+        include_accommodation: false, // 根据需要调整
+      };
+      
+      // 如果有特殊要求，添加到主题中
+      if (specialRequirement.trim()) {
+        request.theme = `${request.theme} - ${specialRequirement.trim()}`;
+      }
+
+      console.log('🚀 发送行程规划请求:', request);
+      
+      const plan = await api.planWithGraph(request);
+      
+      setTripPlan(plan);
+      closeModal();
+      
+      console.log('✅ 行程规划生成成功:', plan);
+      
+    } catch (err) {
+      const errorMessage = formatAPIError(err);
+      setError(errorMessage);
+      console.error('❌ 行程规划失败:', err);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   // 根据状态渲染侧边栏详情
@@ -168,9 +221,30 @@ export default function Home() {
     }
     
     return (
-      <div>
-        <label className="text-sm font-medium text-muted-foreground">目的地</label>
-        <p className="text-base font-semibold text-foreground mt-1">{appState.plan?.city}</p>
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium text-muted-foreground">目的地</label>
+          <p className="text-base font-semibold text-foreground mt-1">{tripPlan?.destination}</p>
+        </div>
+        
+        <div>
+          <label className="text-sm font-medium text-muted-foreground">日期</label>
+          <p className="text-base font-semibold text-foreground mt-1">
+            {tripPlan?.start_date} - {tripPlan?.end_date}
+          </p>
+        </div>
+        
+        <div>
+          <label className="text-sm font-medium text-muted-foreground">旅行主题</label>
+          <p className="text-base font-semibold text-foreground mt-1">{tripPlan?.theme}</p>
+        </div>
+        
+        <div>
+          <label className="text-sm font-medium text-muted-foreground">总预算</label>
+          <p className="text-base font-semibold text-foreground mt-1">
+            约 ¥{tripPlan?.total_estimated_cost}
+          </p>
+        </div>
       </div>
     )
   }
@@ -183,6 +257,16 @@ export default function Home() {
           <Map className="w-16 h-16 text-muted-foreground" />
           <h2 className="text-2xl font-semibold mt-4">无行程</h2>
           <p className="mt-2 text-muted-foreground">请点击左侧的"新建行程"按钮开始。</p>
+          
+          {/* 显示后端连接状态 */}
+          {backendHealthy === false && (
+            <div className="mt-6 p-4 bg-red-100 border border-red-300 rounded-lg text-red-700">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-5 h-5" />
+                <p>后端服务连接失败，请确保后端服务正在运行 (http://localhost:8000)</p>
+              </div>
+            </div>
+          )}
         </div>
       )
     }
@@ -191,8 +275,8 @@ export default function Home() {
       <>
         <header className="flex justify-between items-center mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">您的{appState.plan?.city}之旅</h1>
-            <p className="text-muted-foreground mt-1">已为您智能优化</p>
+            <h1 className="text-3xl font-bold text-foreground">您的{tripPlan?.destination}之旅</h1>
+            <p className="text-muted-foreground mt-1">已为您智能优化 · {tripPlan?.duration_days}天行程</p>
           </div>
           <div className="flex items-center gap-3">
             <button className="btn-secondary border border-border flex items-center gap-2 py-2 px-4 rounded-lg font-semibold shadow-sm">
@@ -205,9 +289,104 @@ export default function Home() {
             </button>
           </div>
         </header>
-        <div className="card p-5">
-          <p>行程 for {appState.plan?.city} will be here.</p>
+        
+        {/* 行程总览 */}
+        {tripPlan?.plan_rationale && (
+          <div className="card p-5 mb-6">
+            <h3 className="text-lg font-semibold mb-3">规划思路</h3>
+            <p className="text-muted-foreground">{tripPlan.plan_rationale}</p>
+          </div>
+        )}
+        
+        {/* 每日行程 */}
+        <div className="space-y-6">
+          {tripPlan?.daily_plans.map((dayPlan, index) => (
+            <div key={dayPlan.date} className="card p-6">
+              <div className="flex justify-between items-start mb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-foreground">
+                    第{index + 1}天 · {dayPlan.day_title}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-1">{dayPlan.date}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-muted-foreground">当日预算</p>
+                  <p className="font-semibold text-foreground">¥{dayPlan.estimated_daily_cost}</p>
+                </div>
+              </div>
+              
+              {/* 活动列表 */}
+              <div className="space-y-4 mb-4">
+                {dayPlan.activities.map((activity, actIndex) => (
+                  <div key={actIndex} className="flex gap-4 p-4 bg-[var(--muted)] rounded-lg">
+                    <div className="flex-shrink-0 text-center">
+                      <div className="w-12 h-12 bg-[var(--primary)] text-[var(--primary-foreground)] rounded-full flex items-center justify-center font-semibold">
+                        {actIndex + 1}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {activity.start_time}
+                      </p>
+                    </div>
+                    
+                    <div className="flex-grow">
+                      <div className="flex justify-between items-start mb-2">
+                        <h4 className="font-semibold text-foreground">{activity.name}</h4>
+                        {activity.estimated_cost && (
+                          <span className="text-sm text-muted-foreground">¥{activity.estimated_cost}</span>
+                        )}
+                      </div>
+                      
+                      <p className="text-sm text-muted-foreground mb-1">{activity.location}</p>
+                      <p className="text-sm text-foreground mb-2">{activity.description}</p>
+                      
+                      <div className="flex flex-wrap gap-2 text-xs">
+                        <span className="px-2 py-1 bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded">
+                          {activity.type}
+                        </span>
+                        <span className="px-2 py-1 bg-[var(--accent)] text-[var(--accent-foreground)] rounded">
+                          {activity.duration_minutes}分钟
+                        </span>
+                        {activity.start_time && activity.end_time && (
+                          <span className="px-2 py-1 bg-[var(--accent)] text-[var(--accent-foreground)] rounded">
+                            {activity.start_time} - {activity.end_time}
+                          </span>
+                        )}
+                      </div>
+                      
+                      {activity.tips && (
+                        <p className="text-xs text-muted-foreground mt-2">💡 {activity.tips}</p>
+                      )}
+                      
+                      {activity.replacement_reason && (
+                        <p className="text-xs text-orange-600 mt-2">🔄 {activity.replacement_reason}</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {/* 当日总结 */}
+              <div className="pt-4 border-t border-[var(--border)]">
+                <p className="text-sm text-muted-foreground">{dayPlan.daily_summary}</p>
+              </div>
+            </div>
+          ))}
         </div>
+        
+        {/* 总体建议 */}
+        {tripPlan?.general_tips && tripPlan.general_tips.length > 0 && (
+          <div className="card p-5 mt-6">
+            <h3 className="text-lg font-semibold mb-3">出行建议</h3>
+            <ul className="space-y-2">
+              {tripPlan.general_tips.map((tip, index) => (
+                <li key={index} className="flex items-start gap-2 text-sm">
+                  <span className="text-[var(--primary)] mt-1">•</span>
+                  <span className="text-muted-foreground">{tip}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </>
     )
   }
@@ -385,22 +564,41 @@ export default function Home() {
             <div className="mt-8 flex justify-end gap-4">
               <button 
                 onClick={closeModal}
-                className="py-2 px-5 bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-md font-semibold hover:bg-[var(--accent)]"
+                disabled={isLoading}
+                className="py-2 px-5 bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-md font-semibold hover:bg-[var(--accent)] disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 取消
               </button>
               <button 
                 onClick={handleSubmit}
-                className="py-2 px-5 btn-primary flex items-center gap-2"
+                disabled={isLoading}
+                className="py-2 px-5 btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {hasPlan ? (
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : hasPlan ? (
                   <RefreshCw className="w-4 h-4" />
                 ) : (
                   <Rocket className="w-4 h-4" />
                 )}
-                <span>{hasPlan ? "更新行程" : "生成行程"}</span>
+                <span>
+                  {isLoading ? "生成中..." : hasPlan ? "更新行程" : "生成行程"}
+                </span>
               </button>
             </div>
+            
+            {/* 错误提示 */}
+            {error && (
+              <div className="mt-4 p-4 bg-red-100 border border-red-300 rounded-lg text-red-700">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="font-semibold">生成失败</p>
+                    <p className="text-sm mt-1">{error}</p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
