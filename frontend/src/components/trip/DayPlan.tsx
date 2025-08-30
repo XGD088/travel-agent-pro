@@ -55,7 +55,7 @@ export function DayPlan({ dayPlan, dayIndex }: DayPlanProps) {
           <p className="text-sm text-muted-foreground">
             {dayPlan.daily_summary}
           </p>
-          {dayPlan.estimated_daily_cost && (
+          {dayPlan.estimated_daily_cost && dayPlan.estimated_daily_cost > 0 && (
             <p className="text-sm text-muted-foreground mt-2">
               <strong>当日预算:</strong> {formatCurrency(dayPlan.estimated_daily_cost)}
             </p>

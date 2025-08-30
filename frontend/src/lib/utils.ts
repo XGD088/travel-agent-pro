@@ -58,3 +58,4 @@ export function inferTransportMode(distance?: number, driveTime?: number) {
     return { mode: 'car', icon: 'Car', text: '驾车' }
   }
 }
+

@@ -148,22 +148,6 @@ export const api = {
     return apiRequest('/health');
   },
 
-  // 生成行程计划（使用标准接口）
-  async generateTrip(request: TripRequest): Promise<TripPlan> {
-    return apiRequest('/generate-trip', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    });
-  },
-
-  // 使用 LangGraph 生成行程计划（推荐）
-  async planWithGraph(request: TripRequest): Promise<TripPlan> {
-    return apiRequest('/plan', {
-      method: 'POST',
-      body: JSON.stringify(request),
-    });
-  },
-
   // 获取组合结果（行程 + 天气）
   async planBundle(request: TripRequest): Promise<{
     plan: TripPlan;
@@ -183,13 +167,7 @@ export const api = {
     });
   },
 
-  // 获取POI统计信息
-  async getPOIStats(): Promise<{
-    total_count: number;
-    sample_pois: Array<{ name: string; type: string; address: string }>;
-  }> {
-    return apiRequest('/poi-stats');
-  },
+
 };
 
 // 工具函数：格式化错误信息

@@ -61,8 +61,8 @@ export function ActivityCard({ activity, index }: ActivityCardProps) {
               </div>
             )}
             
-            {/* 费用信息 */}
-            {activity.estimated_cost && (
+            {/* 费用信息 - 只有当费用存在且大于0时才显示 */}
+            {activity.estimated_cost && activity.estimated_cost > 0 && (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <DollarSign className="w-4 h-4 status-icon-warning" />
                 <span>预估费用: {formatCurrency(activity.estimated_cost)}</span>

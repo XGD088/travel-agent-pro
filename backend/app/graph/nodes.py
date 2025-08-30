@@ -1,28 +1,28 @@
 from typing import Any
 
-from ..services.qwen_service import QwenService
-from ..services.poi_embedding_service import POIEmbeddingService
-from ..services.route_validator_service import RouteValidatorService
-from ..services.amap_service import AmapService
-from ..services.weather_service import WeatherService
-from ..config import get_settings
 from ..logging_config import get_logger
 from ..schemas import TripPlan, DailyForecast, WeatherForecast
 from .state import PlanState
 
 
 logger = get_logger(__name__)
-_settings = get_settings()
-qwen = QwenService()
-poi = POIEmbeddingService()
-amap = AmapService(api_key=_settings.AMAP_API_KEY)
-weather = WeatherService(api_key=_settings.QWEATHER_API_KEY)
-validator = RouteValidatorService(amap)
+
+def _get_services():
+    """获取全局服务实例"""
+    from .. import api
+    return {
+        'qwen': api.qwen_service,
+        'poi': api.poi_service,
+        'amap': api.amap_service,
+        'weather': api.weather_service,
+        'validator': api.route_validator
+    }
 
 
 def planner_node(state: PlanState) -> dict[str, Any]:
     # 复用现有主流程：先直接产出一个初版 plan
-    plan: TripPlan = qwen.generate_trip_plan(state.request)
+    services = _get_services()
+    plan: TripPlan = services['qwen'].generate_trip_plan(state.request)
     return {"plan": plan}
 
 
@@ -84,7 +84,8 @@ def validators_node(state: PlanState) -> dict[str, Any]:
     # 使用现有服务为行程添加距离与开门标注
     if not state.plan:
         return {}
-    annotated = validator.annotate_trip(state.plan)
+    services = _get_services()
+    annotated = services['validator'].annotate_trip(state.plan)
     # violations: 简单规则——若有 open_ok 为 False 则记为违规
     violations: list[dict[str, Any]] = []
     for day in annotated.daily_plans:

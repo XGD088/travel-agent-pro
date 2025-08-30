@@ -57,44 +57,7 @@ class POIEmbeddingService:
             "ticket_price": poi['ticket_price'],
             "business_hours": poi['business_hours'],
             "tags": ', '.join(poi['tags'])  # 将列表转换为字符串
-        }
-    
-    def embed_and_store_pois(self) -> bool:
-        """将POI数据向量化并存储到向量数据库"""
-        try:
-            # 检查Qwen Embedding API可用性
-            if not self._check_embedding_service():
-                logger.error("❌ Qwen Embedding服务不可用")
-                return False
-            
-            # 加载POI数据
-            poi_data = self.load_poi_data()
-            if not poi_data:
-                logger.error("❌ 没有可用的POI数据")
-                return False
-            
-            # 准备文档和元数据
-            documents = []
-            metadatas = []
-            ids = []
-            
-            for poi in poi_data:
-                document = self.create_poi_document(poi)
-                metadata = self.create_poi_metadata(poi)
-                
-                documents.append(document)
-                metadatas.append(metadata)
-                ids.append(poi['id'])
-            
-            # 存储到向量数据库
-            self.vector_service.add_documents(documents, metadatas, ids)
-            
-            logger.info(f"✅ 成功向量化并存储 {len(poi_data)} 个POI")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ POI向量化存储失败: {e}")
-            return False
+                }
     
     def _check_embedding_service(self) -> bool:
         """检查嵌入服务可用性"""
@@ -135,51 +98,4 @@ class POIEmbeddingService:
         except Exception as e:
             logger.error(f"❌ POI搜索失败: {e}")
             return []
-    
-    def get_poi_recommendations(self, theme: str, duration_days: int) -> List[Dict[str, Any]]:
-        """根据主题和天数推荐POI"""
-        try:
-            # 检查嵌入服务可用性
-            if not self._check_embedding_service():
-                logger.error("❌ 嵌入服务不可用，无法进行推荐")
-                return []
-            
-            # 构建推荐查询
-            query = f"北京{theme}旅游景点推荐，适合{duration_days}天行程"
-            
-            # 根据天数调整推荐数量
-            n_recommendations = min(duration_days * 3, 15)  # 每天3个景点，最多15个
-            
-            recommendations = self.search_pois_by_query(query, n_recommendations)
-            
-            logger.info(f"🎯 为'{theme}'主题{duration_days}天行程推荐了 {len(recommendations)} 个POI")
-            return recommendations
-            
-        except Exception as e:
-            logger.error(f"❌ POI推荐失败: {e}")
-            return []
-    
-    def get_collection_stats(self) -> Dict[str, Any]:
-        """获取向量数据库统计信息"""
-        try:
-            count = self.vector_service.get_collection_count()
-            embedding_dimension = self.embedding_service.get_embedding_dimension()
-            
-            stats = {
-                "total_pois": count,
-                "embedding_dimension": embedding_dimension,
-                "status": "ready" if count > 0 else "empty",
-                "embedding_service": "Qwen Embedding API"
-            }
-            
-            # 检查嵌入服务状态
-            if self._check_embedding_service():
-                stats["embedding_status"] = "available"
-            else:
-                stats["embedding_status"] = "unavailable"
-            
-            return stats
-            
-        except Exception as e:
-            logger.error(f"❌ 获取统计信息失败: {e}")
-            return {"status": "error", "error": str(e)} 
+ 

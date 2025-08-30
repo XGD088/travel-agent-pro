@@ -29,15 +29,16 @@ export const useTripStore = create<TripState>((set, get) => ({
     
     try {
       console.log('🚀 发送行程规划请求:', request)
-      const plan = await api.planWithGraph(request)
+      const result = await api.planBundle(request)
       
       set({ 
-        tripPlan: plan, 
+        tripPlan: result.plan, 
         isLoading: false,
         error: null 
       })
       
-      console.log('✅ 行程规划生成成功:', plan)
+      console.log('✅ 行程规划生成成功:', result.plan)
+      console.log('🌤️ 天气信息:', result.weather)
     } catch (err) {
       const errorMessage = formatAPIError(err)
       set({ 
@@ -68,3 +69,4 @@ export const useTripStore = create<TripState>((set, get) => ({
 export const useTripPlan = () => useTripStore(state => state.tripPlan)
 export const useTripLoading = () => useTripStore(state => state.isLoading)
 export const useTripError = () => useTripStore(state => state.error)
+
