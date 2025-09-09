@@ -6,6 +6,7 @@ from ..schemas import TripRequest, TripPlan
 from ..schemas import ActivityType
 from ..logging_config import get_logger
 from .poi_embedding_service import POIEmbeddingService
+from datetime import datetime, timedelta
 
 logger = get_logger(__name__)
 
@@ -128,24 +129,40 @@ class QwenService:
             logger.debug(f"响应内容预览: {response_text[:200]}...")
 
             # 尝试从响应中提取JSON
-            # Qwen模型可能会在JSON前后加一些说明文字，需要提取JSON部分
+            # Qwen模型可能会在JSON前后加一些说明文字或markdown标记，需要提取JSON部分
             try:
+                # 移除可能的markdown代码块标记
+                cleaned_text = response_text.strip()
+                
+                # 处理markdown代码块格式 ```json ... ```
+                if cleaned_text.startswith('```'):
+                    # 找到第一个换行符，跳过 ```json
+                    first_newline = cleaned_text.find('\n')
+                    if first_newline != -1:
+                        cleaned_text = cleaned_text[first_newline + 1:]
+                    
+                    # 移除结尾的 ```
+                    if cleaned_text.endswith('```'):
+                        cleaned_text = cleaned_text[:-3].strip()
+                
                 # 查找JSON开始和结束位置
-                start_idx = response_text.find('{')
-                end_idx = response_text.rfind('}') + 1
+                start_idx = cleaned_text.find('{')
+                end_idx = cleaned_text.rfind('}') + 1
 
                 if start_idx != -1 and end_idx > start_idx:
-                    json_text = response_text[start_idx:end_idx]
+                    json_text = cleaned_text[start_idx:end_idx]
                     logger.debug(f"提取的 JSON 文本: {json_text[:100]}...")
                     trip_data = json.loads(json_text)
                 else:
-                    # 如果没找到JSON，尝试直接解析
-                    logger.warning("⚠️ 未找到JSON标记，尝试直接解析")
-                    trip_data = json.loads(response_text)
+                    # 如果没找到JSON结构，尝试直接解析原文本
+                    logger.warning("⚠️ 未找到JSON结构，尝试直接解析原文本")
+                    trip_data = json.loads(cleaned_text)
 
-            except json.JSONDecodeError:
-                # 如果JSON解析失败，尝试直接解析原文本
-                logger.warning("⚠️ JSON解析失败，尝试解析原文本")
+            except json.JSONDecodeError as e:
+                # 如果JSON解析失败，记录详细错误信息
+                logger.warning("⚠️ JSON解析失败，错误: %s", str(e))
+                logger.debug("⚠️ 尝试解析的文本: %s", cleaned_text[:500])
+                # 最后尝试解析原始响应文本
                 trip_data = json.loads(response_text)
 
             logger.info("✅ JSON 解析成功")
@@ -400,8 +417,27 @@ class QwenService:
         """构建 Qwen prompt"""
         logger.debug("📝 构建 prompt")
 
+        # Add date calculation and constraints
+        try:
+            start_date = datetime.strptime(request.start_date, "%Y-%m-%d")
+            end_date = (start_date + timedelta(days=request.duration_days - 1)).strftime("%Y-%m-%d")
+            date_constraint = f"""
+【重要：日期强制规则】
+✅ 旅行开始日期：{request.start_date}（用户指定）
+✅ 旅行结束日期：{end_date}（自动计算）
+✅ 每日计划的date字段必须严格按顺序：{request.start_date} → {end_date}
+❌ 禁止使用其他日期（如2023-10-15等示例日期）
+❌ 违反此规则将导致整个行程计划无效
+
+            """
+        except Exception as e:
+            logger.error(f"日期解析错误: {e}")
+            date_constraint = "# 日期格式错误，请使用 YYYY-MM-DD 格式"
+
         # 基础信息
-        prompt = f"""请为我生成一个详细的{request.destination}旅行计划。
+        prompt = f"""{date_constraint}
+
+请为我生成一个详细的{request.destination}旅行计划。
 
 要求：
 - 目的地: {request.destination}
@@ -416,8 +452,7 @@ class QwenService:
         if request.interests:
             prompt += f"- 兴趣爱好: {', '.join(request.interests)}\n"
 
-        if request.start_date:
-            prompt += f"- 开始日期: {request.start_date}\n"
+# 日期信息已在上方日期约束中包含，移除重复
 
         # 添加POI上下文信息
         if poi_context:
@@ -436,8 +471,8 @@ class QwenService:
   "destination": "目的地名称",
   "duration_days": {request.duration_days},
   "theme": "旅行主题",
-  "start_date": "开始日期 (YYYY-MM-DD)",
-  "end_date": "结束日期 (YYYY-MM-DD)",
+  "start_date": "开始日期 (YYYY-MM-DD，必须使用上述指定的开始日期)",
+  "end_date": "结束日期 (YYYY-MM-DD，必须使用上述计算的结束日期)",
   "daily_plans": [
     {{
       "date": "日期 (YYYY-MM-DD)",

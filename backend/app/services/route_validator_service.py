@@ -18,6 +18,8 @@ class RouteValidatorService:
         self.amap = amap_service or AmapService()
         self._geocode_cache: Dict[str, Tuple[float, float]] = {}
         self.poi_service = POIEmbeddingService()
+        # 添加POI营业时间缓存，避免重复查询
+        self._poi_hours_cache: Dict[str, Optional[str]] = {}
 
     def _get_coords(self, address: str, city_hint: Optional[str] = None) -> Optional[Tuple[float, float]]:
         if address in self._geocode_cache:
@@ -153,14 +155,24 @@ class RouteValidatorService:
                     logger.info("replacement failed for %s", act.name)
 
     def _fallback_business_hours_from_catalog(self, name: str) -> Optional[str]:
+        # 使用缓存避免重复查询
+        if name in self._poi_hours_cache:
+            return self._poi_hours_cache[name]
+            
         try:
-            pois = self.poi_service.load_poi_data()
+            pois = self.poi_service.load_poi_data()  # 现在已经有缓存了
+            result = None
             for poi in pois:
                 if poi.get("name") == name and poi.get("business_hours"):
-                    return str(poi.get("business_hours"))
+                    result = str(poi.get("business_hours"))
+                    break
+            
+            # 缓存结果（包括None）
+            self._poi_hours_cache[name] = result
+            return result
         except Exception:
-            pass
-        return None
+            self._poi_hours_cache[name] = None
+            return None
 
     def _try_replace_activity(self, trip: TripPlan, day, idx: int) -> bool:
         act = day.activities[idx]

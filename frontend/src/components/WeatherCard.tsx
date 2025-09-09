@@ -22,10 +22,9 @@ type WeatherForecast = {
 
 interface Props {
   location: string
-  host?: string
 }
 
-export default function WeatherCard({ location, host }: Props) {
+export default function WeatherCard({ location }: Props) {
   const [data, setData] = useState<WeatherForecast | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
@@ -37,7 +36,6 @@ export default function WeatherCard({ location, host }: Props) {
       setError(null)
       try {
         const params = new URLSearchParams({ location, days: '3' })
-        if (host) params.set('host', host)
         const resp = await fetch(`http://localhost:8000/weather/forecast?${params.toString()}`, {
           signal: controller.signal,
         })
@@ -53,7 +51,7 @@ export default function WeatherCard({ location, host }: Props) {
     }
     fetchData()
     return () => controller.abort()
-  }, [location, host])
+  }, [location])
 
   if (loading) {
     return (

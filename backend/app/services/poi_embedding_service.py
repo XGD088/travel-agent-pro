@@ -17,13 +17,27 @@ class POIEmbeddingService:
         self.vector_service = VectorDBService()
         self.embedding_service = EmbeddingService(api_key=settings.DASHSCOPE_API_KEY)
         self.poi_data_path = os.path.join(os.path.dirname(__file__), "..", "data", "beijing_poi.json")
+        # 添加内存缓存，避免重复加载
+        self._poi_data_cache: List[Dict[str, Any]] = []
+        self._cache_loaded = False
         logger.info("🔧 初始化POI嵌入服务")
     
     def load_poi_data(self) -> List[Dict[str, Any]]:
-        """加载POI数据"""
+        """加载POI数据（带缓存机制）"""
+        # 如果已经缓存，直接返回
+        if self._cache_loaded and self._poi_data_cache:
+            logger.debug(f"📚 使用缓存的POI数据: {len(self._poi_data_cache)} 条")
+            return self._poi_data_cache
+            
+        # 首次加载
         try:
             with open(self.poi_data_path, 'r', encoding='utf-8') as f:
                 poi_data = json.load(f)
+            
+            # 缓存数据
+            self._poi_data_cache = poi_data
+            self._cache_loaded = True
+            
             logger.info(f"📚 成功加载 {len(poi_data)} 条POI数据")
             return poi_data
         except Exception as e:

@@ -3,7 +3,8 @@ from typing import Any
 from ..logging_config import get_logger
 from ..schemas import TripPlan, DailyForecast, WeatherForecast
 from .state import PlanState
-
+from app.utils.weather_utils import try_get_real_weather, generate_fallback_weather
+from app.logging_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -37,47 +38,21 @@ def scheduler_node(state: PlanState) -> dict[str, Any]:
 
 
 def weather_node(state: PlanState) -> dict[str, Any]:
-    """根据目的地/起始日期获取3日天气，写入 state.weather。
+    """智能天气节点：根据旅行天数获取对应的天气预报"""
+    destination = state.request.destination or "Beijing"
+    trip_days = state.request.duration_days or 3
+    
 
-    - 优先使用目的地名称（或经纬度，未来 state 可扩展坐标）
-    - 上游失败时，返回降级本地样例
-    """
-    try:
-        destination = state.request.destination or "Beijing"
-        # 直接使用已有服务封装的 forecast 接口（映射到 WeatherForecast）
-        from ..api import get_weather_forecast  # 复用现有端点逻辑（内部已做降级）
-        weather: WeatherForecast = get_weather_forecast.__wrapped__(  # type: ignore
-            location=destination, days=3, host=""
-        )
+    logger.info("Getting %d-day weather forecast for %s", trip_days, destination)
+    
+    # 尝试获取真实天气数据
+    weather = try_get_real_weather(destination, trip_days)
+    if weather:
         return {"weather": weather}
-    except Exception as _:
-        # 构造本地降级，避免阻断流程
-        from datetime import datetime, timedelta, timezone
-        today = datetime.now(timezone.utc).date()
-        samples = [
-            ("Sunny", "100", 31, 23, 0.0),
-            ("Cloudy", "101", 30, 22, 0.2),
-            ("Showers", "306", 28, 21, 3.5),
-        ]
-        mapped: list[DailyForecast] = []
-        for i, (text, icon, tmax, tmin, p) in enumerate(samples[:3]):
-            mapped.append(DailyForecast(
-                date=(today + timedelta(days=i)).isoformat(),
-                text_day=text,
-                icon_day=icon,
-                temp_max_c=tmax,
-                temp_min_c=tmin,
-                precip_mm=p,
-                advice="带伞或注意防晒"
-            ))
-        fallback = WeatherForecast(
-            location=destination,
-            location_id=None,
-            days=len(mapped),
-            updated_at=datetime.now(timezone.utc).isoformat(),
-            daily=mapped,
-        )
-        return {"weather": fallback}
+    
+    # 降级到样例数据
+    fallback_weather = generate_fallback_weather(destination, trip_days)
+    return {"weather": fallback_weather}
 
 
 def validators_node(state: PlanState) -> dict[str, Any]:

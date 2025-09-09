@@ -98,34 +98,21 @@ def root():
     return {"message": "Travel Agent Pro Backend API"}
 
 
-def _gen_advice(temp_max_c: int, precip_mm: float) -> str:
-    """根据最高温与降水量生成简短建议（中文）。"""
-    advice = []
-    if temp_max_c < 5:
-        advice.append("穿厚外套/羽绒服")
-    elif temp_max_c < 15:
-        advice.append("穿夹克/薄外套")
-    else:
-        advice.append("轻薄上衣即可")
-    if precip_mm >= 0.3:
-        advice.append("带伞或防水外套")
-    return "，".join(advice)
+
 
 @app.post("/destination-weather")
 async def destination_weather(payload: Dict[str, str]):
-    """自由文本 → 解析坐标 → 天气预报（优先使用坐标避免城市名依赖）。
+    """简化的目的地天气接口：文本 → 目的地 → 天气预报
 
-    输入: { text: string, host?: string }
+    输入: { text: string }
     输出: { destination_context: {...}, weather: WeatherForecast }
     """
     try:
         ensure_initialized()
         text = (payload.get("text") or "").strip()
-        host = (payload.get("host") or "").strip()
         if not text:
             raise HTTPException(status_code=400, detail="text is required")
 
-        # 简化：直接使用文本作为位置查询天气
         # 使用 QwenService 提取目的地
         destinations = qwen_service.extract_destinations(text)
         destination = destinations[0] if destinations else text
@@ -133,41 +120,17 @@ async def destination_weather(payload: Dict[str, str]):
         # 尝试地理编码获取坐标
         coords = amap_service.geocode(destination)
         if not coords:
-            # 兜底：直接返回目的地信息，weather 为 None
-            return {"destination_context": {"destination": destination}, "weather": None}
+            # 兜底：直接用城市名查询天气
+            weather = await get_weather_forecast(location=destination, days=3)
+            return {"destination_context": {"destination": destination}, "weather": weather}
         
         lng, lat = coords
 
-        # 使用坐标直接查询天气（QWeather 支持经纬度）
+        # 优先使用坐标查询天气（更精确）
         coord_str = f"{lng},{lat}"
-        forecast_raw = weather_service.forecast_3d(coord_str, host_override=(host or None))
-        if not forecast_raw or not forecast_raw.get("daily"):
-            # 降级为本地样例，复用现有映射逻辑
-            weather = await get_weather_forecast(location=coord_str, days=3, host=host)  # type: ignore
-            return {"destination_context": {"destination": destination, "lng": lng, "lat": lat}, "weather": weather}
-
-        # 正常映射为 WeatherForecast
-        daily_raw = forecast_raw.get("daily", [])[:3]
-        mapped: list[DailyForecast] = []
-        for d in daily_raw:
-            mapped.append(DailyForecast(
-                date=d.get("fxDate"),
-                text_day=d.get("textDay"),
-                icon_day=d.get("iconDay"),
-                temp_max_c=int(float(d.get("tempMax"))),
-                temp_min_c=int(float(d.get("tempMin"))),
-                precip_mm=float(d.get("precip") or 0.0),
-                advice=_gen_advice(int(float(d.get("tempMax"))), float(d.get("precip") or 0.0))
-            ))
-        from datetime import datetime, timezone
-        weather = WeatherForecast(
-            location=coord_str,
-            location_id=None,
-            days=len(mapped),
-            updated_at=datetime.now(timezone.utc).isoformat(),
-            daily=mapped,
-        )
+        weather = await get_weather_forecast(location=coord_str, days=3)
         return {"destination_context": {"destination": destination, "lng": lng, "lat": lat}, "weather": weather}
+        
     except HTTPException:
         raise
     except Exception as e:
@@ -175,38 +138,36 @@ async def destination_weather(payload: Dict[str, str]):
         raise HTTPException(status_code=500, detail="destination-weather failed")
 
 @app.get("/weather/forecast", response_model=WeatherForecast)
-async def get_weather_forecast(location: str = "Beijing", days: int = 3, host: str = ""):
-    """最小可用的天气预报接口：成功则返回上游 daily，失败降级为本地假数据。
-
-    注意：仅用于 Day5 联调验证，后续会引入 Pydantic schema 与缓存。
-    """
+async def get_weather_forecast(location: str = "Beijing", days: int = 3):
+    """智能天气预报接口：根据天数自动选择最优API参数"""
     try:
         ensure_initialized()
-        loc_id = weather_service.city_lookup(location, host_override=(host or None))
-        forecast_raw = None
-        if loc_id:
-            forecast_raw = weather_service.forecast_3d(loc_id, host_override=(host or None))
-        else:
-            # 直接尝试传入位置字符串
-            forecast_raw = weather_service.forecast_3d(location, host_override=(host or None))
+        
+        # 限制天数范围：1-30天
+        days = min(30, max(1, days))
+        
+        # 使用智能天数选择的天气服务
+        forecast_raw = weather_service.get_forecast(location, days=days)
 
-        if forecast_raw and isinstance(forecast_raw, dict) and forecast_raw.get("daily"):
-            daily_raw = forecast_raw.get("daily", [])[: max(1, min(3, days))]
+        if forecast_raw and forecast_raw.get("daily"):
+            daily_raw = forecast_raw.get("daily", [])
             mapped: list[DailyForecast] = []
             for d in daily_raw:
+                temp_max = int(float(d.get("tempMax", 20)))
+                precip = float(d.get("precip") or 0.0)
                 mapped.append(DailyForecast(
                     date=d.get("fxDate"),
                     text_day=d.get("textDay"),
                     icon_day=d.get("iconDay"),
-                    temp_max_c=int(float(d.get("tempMax"))),
-                    temp_min_c=int(float(d.get("tempMin"))),
-                    precip_mm=float(d.get("precip") or 0.0),
-                    advice=_gen_advice(int(float(d.get("tempMax"))), float(d.get("precip") or 0.0))
+                    temp_max_c=temp_max,
+                    temp_min_c=int(float(d.get("tempMin", 15))),
+                    precip_mm=precip,
+                    advice=weather_service.generate_advice(temp_max, precip)
                 ))
             from datetime import datetime, timezone
             return WeatherForecast(
                 location=location,
-                location_id=loc_id,
+                location_id=forecast_raw.get("location", {}).get("id"),
                 days=len(mapped),
                 updated_at=datetime.now(timezone.utc).isoformat(),
                 daily=mapped,
@@ -231,18 +192,44 @@ async def get_weather_forecast(location: str = "Beijing", days: int = 3, host: s
                 temp_max_c=tmax,
                 temp_min_c=tmin,
                 precip_mm=p,
-                advice=_gen_advice(tmax, p)
+                advice=weather_service.generate_advice(tmax, p)
             ))
         return WeatherForecast(
             location=location,
-            location_id=loc_id,
+            location_id=None,  # 降级时没有location_id
             days=len(mapped),
             updated_at=datetime.now(timezone.utc).isoformat(),
             daily=mapped,
         )
     except Exception as e:
         logger.error(f"❌ 获取天气预报失败: {e}")
-        raise HTTPException(status_code=503, detail="weather service unavailable")
+        logger.warning("Weather upstream unavailable; return local fallback")
+        # 继续执行兜底逻辑而不是抛出 HTTPException
+        from datetime import datetime, timedelta, timezone
+        today = datetime.now(timezone.utc).date()
+        samples = [
+            ("Sunny", "100", 31, 23, 0.0),
+            ("Cloudy", "101", 30, 22, 0.2),
+            ("Showers", "306", 28, 21, 3.5),
+        ]
+        mapped: list[DailyForecast] = []
+        for i, (text, icon, tmax, tmin, p) in enumerate(samples[: max(1, min(3, days))]):
+            mapped.append(DailyForecast(
+                date=(today + timedelta(days=i)).isoformat(),
+                text_day=text,
+                icon_day=icon,
+                temp_max_c=tmax,
+                temp_min_c=tmin,
+                precip_mm=p,
+                advice=weather_service.generate_advice(tmax, p)
+            ))
+        return WeatherForecast(
+            location=location,
+            location_id=None,
+            days=len(mapped),
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            daily=mapped,
+        )
 
 @app.post("/plan-bundle")
 async def plan_bundle(request: TripRequest):
