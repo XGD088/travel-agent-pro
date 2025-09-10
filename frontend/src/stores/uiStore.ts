@@ -16,6 +16,7 @@ interface UIState {
   tags: Array<{ id: number; text: string; type: 'system' | 'custom' }>
   tagInput: string
   specialRequirement: string
+  dateError: string
   
   // 模态框操作
   openModal: () => void
@@ -36,6 +37,7 @@ interface UIState {
   setTagInput: (input: string) => void
   setSpecialRequirement: (requirement: string) => void
   resetForm: () => void
+  setDateError: (error: string) => void
 }
 
 const defaultTags = [
@@ -52,6 +54,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   tags: defaultTags,
   tagInput: '',
   specialRequirement: '',
+  dateError: '',
   
   // 模态框操作
   openModal: () => set({ isModalOpen: true }),
@@ -98,8 +101,11 @@ export const useUIStore = create<UIState>((set, get) => ({
     selectedStyle: 'relaxed',
     tags: defaultTags,
     tagInput: '',
-    specialRequirement: ''
-  })
+    specialRequirement: '',
+    dateError: ''
+  }),
+  
+  setDateError: (error: string) => set({ dateError: error })
 }))
 
 // 便捷的选择器函数 - 使用稳定的引用避免无限渲染
@@ -121,9 +127,11 @@ export const useFormState = () => ({
   tags: useUIStore(state => state.tags),
   tagInput: useUIStore(state => state.tagInput),
   specialRequirement: useUIStore(state => state.specialRequirement),
+  dateError: useUIStore(state => state.dateError),
   addTag: useUIStore(state => state.addTag),
   removeTag: useUIStore(state => state.removeTag),
   setTagInput: useUIStore(state => state.setTagInput),
   setSpecialRequirement: useUIStore(state => state.setSpecialRequirement),
+  setDateError: useUIStore(state => state.setDateError),
   reset: useUIStore(state => state.resetForm)
 })

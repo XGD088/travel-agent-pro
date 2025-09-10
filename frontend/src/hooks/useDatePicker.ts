@@ -57,6 +57,7 @@ export function useDatePicker(isModalOpen: boolean) {
               showMonths: 2,
               disableMobile: true,
               appendTo: document.body,
+              minDate: "today", // 限制不能选择过去的日期
               onReady: (selectedDates: any, dateStr: string, instance: any) => {
                 instance.calendarContainer.classList.add('dark')
               }
@@ -74,20 +75,45 @@ export function useDatePicker(isModalOpen: boolean) {
     const dateInput = document.getElementById('date-picker') as HTMLInputElement
     const dateRange = dateInput?.value
     
-    if (!dateRange || !dateRange.includes(' to ')) {
+    console.log('📅 Date input element:', dateInput)
+    console.log('📅 Date input value:', dateRange) // 调试日志
+    
+    if (!dateRange) {
       return {
         startDate: '',
         durationDays: 2
       }
     }
     
-    const [start, end] = dateRange.split(' to ')
+    // 尝试不同的分隔符格式
+    let start = '', end = ''
+    if (dateRange.includes(' to ')) {
+      [start, end] = dateRange.split(' to ')
+    } else if (dateRange.includes(' 至 ')) {
+      [start, end] = dateRange.split(' 至 ')
+    } else if (dateRange.includes(' - ')) {
+      [start, end] = dateRange.split(' - ')
+    } else {
+      // 如果只选择了一个日期，就当作开始日期
+      start = dateRange
+      end = dateRange
+    }
+    
+    if (!start || !end) {
+      return {
+        startDate: '',
+        durationDays: 2
+      }
+    }
+    
     const startDate = start.trim()
-    const startDateObj = new Date(start)
-    const endDateObj = new Date(end)
+    const startDateObj = new Date(start.trim())
+    const endDateObj = new Date(end.trim())
     const durationDays = Math.ceil(
       (endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)
     ) + 1
+    
+    console.log('📅 Parsed dates:', { startDate, durationDays }) // 调试日志
     
     return {
       startDate,

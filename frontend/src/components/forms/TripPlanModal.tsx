@@ -16,7 +16,7 @@ import { TripRequest } from '../../lib/api'
 export function TripPlanModal() {
   const { isOpen, close } = useModal()
   const { selectedStyle } = useStyleDropdown()
-  const { tags, specialRequirement, setSpecialRequirement } = useFormState()
+  const { tags, specialRequirement, setSpecialRequirement, setDateError } = useFormState()
   const { generateTrip, clearError } = useTripStore()
   const tripPlan = useTripPlan()
   const isLoading = useTripLoading()
@@ -27,10 +27,19 @@ export function TripPlanModal() {
 
   const handleSubmit = async () => {
     clearError()
+    setDateError('') // 清除之前的日期错误
     
     try {
       // 获取日期范围
       const { startDate, durationDays } = getDateRange()
+      console.log('🔍 Submit validation - startDate:', startDate, 'durationDays:', durationDays)
+      
+      // 简单校验：检查是否选择了日期
+      if (!startDate) {
+        console.log('❌ No start date found')
+        setDateError('请选择旅行日期')
+        return
+      }
       
       // 构建请求
       const request: TripRequest = {
@@ -47,6 +56,7 @@ export function TripPlanModal() {
         request.theme = `${request.theme} - ${specialRequirement.trim()}`
       }
 
+      console.log('✅ Submitting trip request:', request)
       await generateTrip(request)
       close()
       

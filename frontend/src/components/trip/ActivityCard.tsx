@@ -7,11 +7,14 @@ import {
   DollarSign, 
   Lightbulb, 
   CloudRain,
-  CheckCircle2 
+  CheckCircle2,
+  XCircle,
+  Clock
 } from 'lucide-react'
 import { Card } from '../ui/Card'
 import { Activity } from '../../lib/api'
 import { formatCurrency, formatTime } from '../../lib/utils'
+import { BusinessHoursUtil } from '../../lib/businessHours'
 
 interface ActivityCardProps {
   activity: Activity
@@ -21,6 +24,42 @@ interface ActivityCardProps {
 export function ActivityCard({ activity, index }: ActivityCardProps) {
   const startTime = activity.start_time || `${9 + index * 2}:${index % 2 === 0 ? '00' : '30'}`
   const endTime = activity.end_time || `${10 + index * 2}:${index % 2 === 0 ? '30' : '00'}`
+
+  // 获取营业状态信息
+  const businessStatus = BusinessHoursUtil.getBusinessStatus(
+    startTime,
+    endTime,
+    activity.open_hours_raw,
+    activity.open_ok,
+    activity.closed_reason
+  )
+
+  // 根据状态类型选择图标和样式
+  const getStatusIcon = () => {
+    switch (businessStatus.statusType) {
+      case 'open':
+        return {
+          icon: CheckCircle2,
+          className: "w-4 h-4 text-green-500",
+          textColor: "text-green-600"
+        }
+      case 'closed':
+        return {
+          icon: XCircle,
+          className: "w-4 h-4 text-red-500",
+          textColor: "text-red-600"
+        }
+      case 'unknown':
+      default:
+        return {
+          icon: Clock,
+          className: "w-4 h-4 text-blue-500",
+          textColor: "text-blue-600"
+        }
+    }
+  }
+
+  const statusIcon = getStatusIcon()
 
   return (
     <Card padding="md" hover className="animate-fade-in-up">
@@ -43,13 +82,10 @@ export function ActivityCard({ activity, index }: ActivityCardProps) {
           
           <div className="space-y-1.5 text-sm">
             {/* 营业状态 */}
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <CheckCircle2 className="w-4 h-4 status-icon-success" />
-              <span>
-                {activity.open_ok === false 
-                  ? `已关闭: ${activity.closed_reason || '请确认营业时间'}`
-                  : '营业中: 全天开放'
-                }
+            <div className="flex items-center gap-2">
+              <statusIcon.icon className={statusIcon.className} />
+              <span className={statusIcon.textColor}>
+                {businessStatus.displayText}
               </span>
             </div>
             
